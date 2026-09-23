@@ -232,9 +232,9 @@ dialog.
 
 ## Licence
 
-AGPLv3 — see [LICENSE](LICENSE). This follows from linking JUCE's free
-tier, which is AGPLv3 itself; details in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+AB Reference is © 2026 T'Zorr and is distributed under AGPLv3 — see
+[LICENSE](LICENSE). This follows from linking JUCE's free tier, which is
+AGPLv3 itself; details in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Contact
 
