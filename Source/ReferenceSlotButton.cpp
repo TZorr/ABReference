@@ -47,15 +47,15 @@ void ReferenceSlotButton::paint (juce::Graphics& g)
     const auto bounds = getLocalBounds().toFloat();
     const bool empty  = clip == nullptr;
 
-    g.setColour (selected ? ABLook::accentB.withAlpha (0.22f)
-                          : ABLook::panel.brighter (hovered ? 0.12f : 0.0f));
-    g.fillRoundedRectangle (bounds, 4.0f);
+    g.setColour (selected ? ABLook::accentB.withAlpha (0.16f)
+                          : ABLook::card.brighter (hovered ? 0.1f : 0.0f));
+    g.fillRoundedRectangle (bounds, ABLook::controlRadius);
 
     g.setColour (dragOver ? ABLook::accentB
-                          : (selected ? ABLook::accentB : ABLook::panel.brighter (0.25f)));
-    g.drawRoundedRectangle (bounds.reduced (0.5f), 4.0f, dragOver || selected ? 1.6f : 1.0f);
+                          : (selected ? ABLook::accentB.withAlpha (0.85f) : ABLook::outline));
+    g.drawRoundedRectangle (bounds.reduced (0.5f), ABLook::controlRadius, dragOver || selected ? 1.4f : 1.0f);
 
-    auto area = getLocalBounds().reduced (7, 0);
+    auto area = getLocalBounds().reduced (10, 0);
 
     // The number is always visible, loaded or not: it is what the 1/2/3 keys
     // and the automation lane refer to, so it has to be readable even when the
@@ -78,13 +78,13 @@ void ReferenceSlotButton::paint (juce::Graphics& g)
     if (empty)
     {
         g.setColour (ABLook::dimText.withAlpha (0.7f));
-        g.setFont (ABLook::uiFont (12.0f, juce::Font::italic));
+        g.setFont (ABLook::uiFont (12.5f, juce::Font::italic));
         g.drawText ("empty", area, juce::Justification::centredLeft);
         return;
     }
 
     g.setColour (selected ? ABLook::text : ABLook::text.withAlpha (0.85f));
-    g.setFont (ABLook::uiFont (12.0f));
+    g.setFont (ABLook::uiFont (12.5f));
 
     // Dropping the extension rather than the middle of the name: at this width
     // the informative part of "TheBiggerLights_master_v3.wav" is the front, and

@@ -13,6 +13,8 @@ using namespace ABLook;
 ABReferenceEditor::ABReferenceEditor (ABReferenceProcessor& p)
     : AudioProcessorEditor (&p), plugin (p)
 {
+    setLookAndFeel (&lookAndFeel);
+
     auto setupButton = [this] (juce::Button& b) { addAndMakeVisible (b); };
 
     setupButton (aButton);
@@ -56,12 +58,17 @@ ABReferenceEditor::ABReferenceEditor (ABReferenceProcessor& p)
     aButton.setClickingTogglesState (false);
     bButton.setClickingTogglesState (false);
 
+    for (auto* button : { &aButton, &bButton })
+        button->getProperties().set (ABLookAndFeel::abSwitch, true);
+
+    refreshSwitchCaptions();
+
     resetButton.setTooltip ("Reset integrated LUFS and the held true peak");
 
     addAndMakeVisible (trimSlider);
     addAndMakeVisible (offsetSlider);
-    trimSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 74, 20);
-    offsetSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 74, 20);
+    trimSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 78, 22);
+    offsetSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 78, 22);
     trimSlider.setTextValueSuffix (" dB");
     offsetSlider.setTextValueSuffix (" ms");
     offsetSlider.setTooltip ("Shifts the reference along the timeline. Also the "
@@ -83,6 +90,7 @@ ABReferenceEditor::ABReferenceEditor (ABReferenceProcessor& p)
     matchLabel.setJustificationType (juce::Justification::centredLeft);
 
     loopRegionLabel.setFont (numberFont (12.0f));
+    loopRegionLabel.setJustificationType (juce::Justification::centredRight);
 
     auto& state = plugin.apvts;
     levelMatchAttachment = std::make_unique<ButtonAttachment> (state, ABParams::levelMatch, levelMatchButton);
@@ -132,13 +140,14 @@ ABReferenceEditor::ABReferenceEditor (ABReferenceProcessor& p)
     };
 
     setWantsKeyboardFocus (true);
-    setSize (480, 516);
+    setSize (780, 440);
     startTimerHz (30);
 }
 
 ABReferenceEditor::~ABReferenceEditor()
 {
     stopTimer();
+    setLookAndFeel (nullptr);
 }
 
 //==============================================================================
@@ -306,22 +315,21 @@ void ABReferenceEditor::resized()
 {
     auto area = getLocalBounds().reduced (16);
 
-    area.removeFromTop (30);   // title, painted
-
-    // The switch. Deliberately the largest thing on the panel.
-    auto switchRow = area.removeFromTop (74);
-    aButton.setBounds (switchRow.removeFromLeft (switchRow.getWidth() / 2 - 5));
-    bButton.setBounds (switchRow.removeFromRight (switchRow.getWidth() - 10));
-
-    area.removeFromTop (10);
-
-    // Directly under the switch, because the waveform is about B and the switch
-    // is what B means. It is also the drop target people aim at first.
-    waveform.setBounds (area.removeFromTop (76));
-
+    headerArea = area.removeFromTop (28);   // title and transport, painted
     area.removeFromTop (12);
 
-    auto fileRow = area.removeFromTop (26);
+    statusLabel.setBounds (area.removeFromBottom (18));
+    area.removeFromBottom (6);
+
+    auto cards = area.removeFromBottom (124);
+    area.removeFromBottom (14);
+
+    // The switch gets a column of its own, A over B, laid out once the right
+    // side has settled so it can span exactly from the slots to the waveform.
+    auto switchColumn = area.removeFromLeft (150);
+    area.removeFromLeft (12);
+
+    auto fileRow = area.removeFromTop (28);
 
     // Three equal slots across the full width, with a gap between them. There is
     // no eject button beside them: with three slots one shared clear button has
@@ -331,7 +339,7 @@ void ABReferenceEditor::resized()
     //
     // Integer division would drift the last edge by a pixel or two, so each
     // slot's right edge is computed from the full width rather than accumulated.
-    const int gap = 4;
+    const int gap = 6;
     const int total = fileRow.getWidth();
 
     for (int slot = 0; slot < ABParams::numSlots; ++slot)
@@ -341,34 +349,60 @@ void ABReferenceEditor::resized()
         slotButtons[(size_t) slot]->setBounds (x0, fileRow.getY(), x1 - x0, fileRow.getHeight());
     }
 
-    infoLabel.setBounds (area.removeFromTop (18));
-
-    area.removeFromTop (10);
-    meterArea = area.removeFromTop (74);
-
-    auto resetRow = area.removeFromTop (24);
-    resetButton.setBounds (resetRow.removeFromRight (70));
-
     area.removeFromTop (8);
 
-    auto matchRow = area.removeFromTop (24);
-    levelMatchButton.setBounds (matchRow.removeFromLeft (124));
-    matchLabel.setBounds (matchRow);
+    // What the waveform is of goes under it on the left, and what part of it is
+    // looping goes under it on the right - both are facts about the picture
+    // directly above them.
+    auto infoRow = area.removeFromBottom (18);
+    loopRegionLabel.setBounds (infoRow.removeFromRight (210));
+    infoLabel.setBounds (infoRow);
 
-    auto trimRow = area.removeFromTop (24);
-    trimLabel.setBounds (trimRow.removeFromLeft (54));
+    area.removeFromBottom (6);
+
+    waveform.setBounds (area);
+
+    // Still the largest thing on the panel - it is the control that gets hit a
+    // few hundred times an evening. Laid out larger than it looks, by the inset
+    // the look-and-feel draws it at, so the glow has room and the visible edges
+    // line up with the slots above and the waveform beside it.
+    switchColumn = switchColumn.withTop (fileRow.getY()).withBottom (waveform.getBottom());
+
+    const int inset = ABLookAndFeel::switchInset;
+    const int half  = switchColumn.getHeight() / 2;
+
+    aButton.setBounds (switchColumn.withHeight (half - 5).expanded (inset));
+    bButton.setBounds (switchColumn.withTrimmedTop (half + 5).expanded (inset));
+
+    // The two cards: what the plugin measured, and what it is doing about it.
+    meterArea = cards.removeFromLeft (300);
+    cards.removeFromLeft (12);
+    controlsArea = cards;
+
+    auto meterInner = meterArea.reduced (12);
+    resetButton.setBounds (meterInner.removeFromTop (22).removeFromRight (60));
+
+    auto controls = controlsArea.reduced (14, 12);
+
+    auto toggleRow = controls.removeFromTop (24);
+    levelMatchButton.setBounds (toggleRow.removeFromLeft (124));
+    loopButton.setBounds (toggleRow.removeFromRight (70));
+    toggleRow.removeFromRight (12);
+    monoButton.setBounds (toggleRow.removeFromRight (74));
+
+    // Directly under the switch that produces it, indented to the switch's
+    // label rather than to its track, so it reads as that control's value.
+    matchLabel.setBounds (controls.removeFromTop (22).withTrimmedLeft (38));
+
+    controls.removeFromTop (2);
+
+    auto trimRow = controls.removeFromTop (26);
+    trimLabel.setBounds (trimRow.removeFromLeft (56));
     trimSlider.setBounds (trimRow);
 
-    auto offsetRow = area.removeFromTop (24);
-    offsetLabel.setBounds (offsetRow.removeFromLeft (54));
+    auto offsetRow = controls.removeFromTop (26);
+    offsetLabel.setBounds (offsetRow.removeFromLeft (56));
     offsetSlider.setBounds (offsetRow);
-
-    auto toggleRow = area.removeFromTop (24);
-    monoButton.setBounds (toggleRow.removeFromLeft (80));
-    loopButton.setBounds (toggleRow.removeFromLeft (76));
-    loopRegionLabel.setBounds (toggleRow);
-
-    statusLabel.setBounds (area.removeFromBottom (18));
 }
 
 //==============================================================================
@@ -376,33 +410,84 @@ void ABReferenceEditor::paint (juce::Graphics& g)
 {
     g.fillAll (background);
 
-    g.setColour (text);
-    g.setFont (uiFont (16.0f, juce::Font::bold));
-    g.drawText ("AB REFERENCE", 16, 12, getWidth() - 32, 24, juce::Justification::centredLeft);
+    paintHeader (g);
 
-    g.setColour (dimText);
-    g.setFont (uiFont (11.0f));
-    g.drawText (plugin.isTransportRunning() ? "TRANSPORT" : "STOPPED",
-                16, 12, getWidth() - 32, 24, juce::Justification::centredRight);
+    paintCard (g, meterArea);
+    paintCard (g, controlsArea);
 
     paintMeterTable (g);
 
     if (dragHighlight)
     {
         g.setColour (accentB.withAlpha (0.8f));
-        g.drawRect (getLocalBounds().reduced (4), 2);
+        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (4.0f), cardRadius, 2.0f);
     }
+}
+
+void ABReferenceEditor::paintHeader (juce::Graphics& g)
+{
+    g.setColour (text);
+    g.setFont (uiFont (15.0f, juce::Font::bold).withExtraKerningFactor (0.08f));
+    g.drawText ("AB REFERENCE", headerArea, juce::Justification::centredLeft);
+
+    // The transport as a pill with a lamp in it. Green is used for this and for
+    // nothing else on the panel, so it cannot be mistaken for A, B or a warning.
+    const bool running = plugin.isTransportRunning();
+    const juce::String label = running ? "PLAYING" : "STOPPED";
+
+    const auto font = uiFont (10.5f, juce::Font::bold).withExtraKerningFactor (0.06f);
+
+    // Fixed width, wide enough for either word: a pill that resized itself
+    // whenever the transport started would make the header twitch.
+    auto pill = headerArea.toFloat().removeFromRight (96.0f).withSizeKeepingCentre (96.0f, 22.0f);
+
+    g.setColour (card);
+    g.fillRoundedRectangle (pill, 11.0f);
+    g.setColour (outline);
+    g.drawRoundedRectangle (pill.reduced (0.5f), 10.5f, 1.0f);
+
+    auto inside = pill.reduced (11.0f, 0.0f);
+    const auto lamp = inside.removeFromLeft (7.0f).withSizeKeepingCentre (7.0f, 7.0f);
+
+    if (running)
+    {
+        g.setColour (ABLook::transportLamp.withAlpha (0.35f));
+        g.fillEllipse (lamp.expanded (2.5f));
+    }
+
+    g.setColour (running ? ABLook::transportLamp : dimText.withAlpha (0.6f));
+    g.fillEllipse (lamp);
+
+    inside.removeFromLeft (7.0f);
+    g.setColour (running ? text : dimText);
+    g.setFont (font);
+    g.drawText (label, inside, juce::Justification::centredLeft);
+}
+
+void ABReferenceEditor::paintCard (juce::Graphics& g, juce::Rectangle<int> bounds)
+{
+    const auto area = bounds.toFloat();
+
+    g.setColour (card);
+    g.fillRoundedRectangle (area, cardRadius);
+    g.setColour (outline);
+    g.drawRoundedRectangle (area.reduced (0.5f), cardRadius, 1.0f);
 }
 
 void ABReferenceEditor::paintMeterTable (juce::Graphics& g)
 {
-    g.setColour (panel);
-    g.fillRoundedRectangle (meterArea.toFloat(), 4.0f);
+    auto inner = meterArea.reduced (14, 12);
 
-    const int left  = meterArea.getX() + 10;
-    const int width = meterArea.getWidth() - 20;
+    g.setColour (dimText);
+    g.setFont (uiFont (10.5f, juce::Font::bold).withExtraKerningFactor (0.08f));
+    g.drawText ("LOUDNESS", inner.removeFromTop (22), juce::Justification::centredLeft);
 
-    const int labelColumn = 40;
+    inner.removeFromTop (6);
+
+    const int left  = inner.getX();
+    const int width = inner.getWidth();
+
+    const int labelColumn = 30;
     const int column = (width - labelColumn) / 3;
 
     auto columnBounds = [&] (int index, int y, int height)
@@ -413,11 +498,10 @@ void ABReferenceEditor::paintMeterTable (juce::Graphics& g)
     g.setColour (dimText);
     g.setFont (uiFont (11.0f));
 
-    const int headerY = meterArea.getY() + 6;
-    g.drawText ("LUFS (S)",  columnBounds (0, headerY, 14), juce::Justification::centredRight);
-    g.drawText ("LUFS (I)",  columnBounds (1, headerY, 14), juce::Justification::centredRight);
-    g.drawText ("dBTP",      columnBounds (2, headerY, 14), juce::Justification::centredRight);
-
+    const int headerY = inner.getY();
+    g.drawText ("LUFS S",  columnBounds (0, headerY, 14), juce::Justification::centredRight);
+    g.drawText ("LUFS I",  columnBounds (1, headerY, 14), juce::Justification::centredRight);
+    g.drawText ("dBTP",    columnBounds (2, headerY, 14), juce::Justification::centredRight);
     const auto clip = plugin.getSelectedClip();
 
     struct Row
@@ -439,15 +523,15 @@ void ABReferenceEditor::paintMeterTable (juce::Graphics& g)
           clip != nullptr }
     };
 
-    int y = meterArea.getY() + 24;
+    int y = headerY + 18;
 
     for (const auto& row : rows)
     {
         g.setColour (row.colour);
-        g.setFont (uiFont (13.0f, juce::Font::bold));
-        g.drawText (row.name, left, y, labelColumn, 20, juce::Justification::centredLeft);
+        g.setFont (uiFont (14.0f, juce::Font::bold));
+        g.drawText (row.name, left, y, labelColumn, 26, juce::Justification::centredLeft);
 
-        g.setFont (numberFont (13.0f));
+        g.setFont (numberFont (16.0f));
 
         // The one number that gets its own colour is a reference pushed past
         // 0 dBTP by the level match. That is not an error - it is the plugin
@@ -456,13 +540,13 @@ void ABReferenceEditor::paintMeterTable (juce::Graphics& g)
         const bool clipping = row.valid && row.truePeak > 0.0f;
 
         g.setColour (row.valid ? text : dimText);
-        g.drawText (row.valid ? formatLufs (row.shortTerm)  : juce::String ("-"), columnBounds (0, y, 20), juce::Justification::centredRight);
-        g.drawText (row.valid ? formatLufs (row.integrated) : juce::String ("-"), columnBounds (1, y, 20), juce::Justification::centredRight);
+        g.drawText (row.valid ? formatLufs (row.shortTerm)  : juce::String ("-"), columnBounds (0, y, 26), juce::Justification::centredRight);
+        g.drawText (row.valid ? formatLufs (row.integrated) : juce::String ("-"), columnBounds (1, y, 26), juce::Justification::centredRight);
 
         g.setColour (clipping ? warning : (row.valid ? text : dimText));
-        g.drawText (row.valid ? formatDb (row.truePeak) : juce::String ("-"), columnBounds (2, y, 20), juce::Justification::centredRight);
+        g.drawText (row.valid ? formatDb (row.truePeak) : juce::String ("-"), columnBounds (2, y, 26), juce::Justification::centredRight);
 
-        y += 22;
+        y += 28;
     }
 }
 
@@ -533,6 +617,28 @@ juce::String ABReferenceEditor::describeReference() const
     return parts.joinIntoString (utf8 ("  ·  "));
 }
 
+void ABReferenceEditor::refreshSwitchCaptions()
+{
+    // Under each letter, what it means at the moment: A is always your own
+    // chain; B is whichever reference is selected, by name, so that switching
+    // slots changes the switch you are about to press as well.
+    const auto clip = plugin.getSelectedClip();
+    const juce::String bCaption = clip != nullptr ? clip->file.getFileNameWithoutExtension()
+                                                  : juce::String ("No reference");
+
+    auto setCaption = [] (juce::TextButton& button, const juce::String& caption)
+    {
+        if (button.getProperties()[ABLookAndFeel::caption].toString() != caption)
+        {
+            button.getProperties().set (ABLookAndFeel::caption, caption);
+            button.repaint();
+        }
+    };
+
+    setCaption (aButton, "Your chain");
+    setCaption (bButton, bCaption);
+}
+
 //==============================================================================
 void ABReferenceEditor::timerCallback()
 {
@@ -543,6 +649,15 @@ void ABReferenceEditor::timerCallback()
 
     const auto clip = plugin.getSelectedClip();
     refreshSlots();
+    refreshSwitchCaptions();
+
+    if (const bool running = plugin.isTransportRunning(); running != lastTransportRunning)
+    {
+        lastTransportRunning = running;
+        repaint (headerArea);
+    }
+
+    waveform.setActive (onB);
 
     infoLabel.setText (describeReference(), juce::dontSendNotification);
 

@@ -20,7 +20,7 @@
 
 cmake_minimum_required(VERSION 3.22)
 
-project(ABReference VERSION 0.2.0)
+project(ABReference VERSION 0.3.0)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -81,6 +81,7 @@ target_sources(ABReference PRIVATE
     ${ABREFERENCE_CORE_SOURCES}
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
+    Source/ABLookAndFeel.cpp
     Source/ReferenceSlotButton.cpp
     Source/WaveformDisplay.cpp)
 

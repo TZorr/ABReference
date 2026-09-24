@@ -52,19 +52,27 @@ public:
     float integratedLufs = kLoudnessSilence;
     float truePeakDb     = -200.0f;
 
-    /** A min/max envelope of the whole file, for the panel to draw without ever
-        touching the audio buffer. Both channels go into the same pair of arrays:
-        at the size this is drawn a second lane would be four pixels tall and
-        would say nothing the combined envelope does not.
+    /** A min/max envelope of the whole file, and an RMS envelope inside it,
+        for the panel to draw without ever touching the audio buffer. Both
+        channels go into the same arrays: at the size this is drawn a second lane
+        would be half the height and would say nothing the combined envelope
+        does not.
+
+        The RMS is there because the peaks alone say almost nothing about a
+        finished master. A limiter holds every peak within a dB of full scale,
+        so the peak envelope of a loud record is a solid bar from the first bar
+        to the last, and the quiet breakdown is exactly as tall as the drop.
+        The RMS is what moves between sections.
 
         Fixed size rather than sized to the display, because it is built on the
         loader thread and the panel it feeds may not exist yet - and 2048 buckets
-        is 16 KB, which is nothing next to the audio it summarises and more
-        resolution than a 460 pixel strip can show. */
+        is 24 KB, which is nothing next to the audio it summarises and still more
+        resolution than the 600 pixel strip can show. */
     static constexpr int numWaveformBuckets = 2048;
 
     std::array<float, numWaveformBuckets> waveMin {};
     std::array<float, numWaveformBuckets> waveMax {};
+    std::array<float, numWaveformBuckets> waveRms {};
 
     int    getNumSamples()  const noexcept { return audio.getNumSamples(); }
     double getLengthSeconds() const noexcept

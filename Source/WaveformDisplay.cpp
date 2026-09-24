@@ -13,7 +13,7 @@ using namespace ABLook;
 
 namespace
 {
-    constexpr float cornerRadius = 4.0f;
+    constexpr float cornerRadius = cardRadius;
 }
 
 //==============================================================================
@@ -57,6 +57,15 @@ void WaveformDisplay::setPlayhead (double seconds, bool running)
 
     playhead = seconds;
     transportRunning = running;
+    repaint();
+}
+
+void WaveformDisplay::setActive (bool isActive)
+{
+    if (active == isActive)
+        return;
+
+    active = isActive;
     repaint();
 }
 
@@ -107,34 +116,72 @@ void WaveformDisplay::rebuildCache()
     const int width  = getWidth();
     const int height = getHeight();
     const float middle = (float) height * 0.5f;
-    const float halfHeight = middle - 4.0f;
+    const float halfHeight = middle - 6.0f;
 
-    g.setColour (accentB.withAlpha (0.85f));
+    // Scaled to the clip's own loudest RMS rather than to full scale, so that
+    // the loudest stretch of any reference fills most of the strip. The picture
+    // is for finding sections, not for reading levels - the meters below it do
+    // that - and on a finished master the sections are close together: the
+    // reference this was tuned on sits within a dB of -10.5 dBFS RMS for six of
+    // its eight minutes. Drawn against full scale, that loudest RMS reached 40%
+    // of the height and a dB was three pixels; drawn against itself, a dB is a
+    // tenth of the strip and the break in the middle is plainly a break.
+    //
+    // The peaks share the scale and are clipped at the edge. That makes the
+    // faint outline mostly a backdrop on a loud master, which is honest: it is
+    // what a limiter does to peaks.
+    float loudestRms = 0.0f;
+
+    for (int bucket = 0; bucket < ReferenceClip::numWaveformBuckets; ++bucket)
+        loudestRms = juce::jmax (loudestRms, clip->waveRms[(size_t) bucket]);
+
+    const float scale = 0.8f * halfHeight / juce::jmax (loudestRms, 1.0e-4f);
+
+    const auto peakColour = accentB.withAlpha (0.24f);
+    const auto rmsColour  = accentB;
+
+    g.setColour (text.withAlpha (0.08f));
+    g.fillRect (0.0f, middle - 0.5f, (float) width, 1.0f);
 
     // One column of pixels per column of pixels, each summarising however many
     // buckets land under it. Going the other way - one line per bucket - draws
-    // 2048 lines into 460 pixels and produces a solid block.
+    // 2048 lines into 600 pixels and produces a solid block.
     for (int x = 0; x < width; ++x)
     {
         const int firstBucket = x * ReferenceClip::numWaveformBuckets / width;
         const int lastBucket  = juce::jmax (firstBucket + 1,
                                             (x + 1) * ReferenceClip::numWaveformBuckets / width);
 
-        float low = 0.0f, high = 0.0f;
+        float low = 0.0f, high = 0.0f, meanSquare = 0.0f;
 
         for (int bucket = firstBucket; bucket < lastBucket; ++bucket)
         {
             low  = juce::jmin (low,  clip->waveMin[(size_t) bucket]);
             high = juce::jmax (high, clip->waveMax[(size_t) bucket]);
+
+            const float rms = clip->waveRms[(size_t) bucket];
+            meanSquare += rms * rms;
         }
 
-        // A column with signal in it but less than half a pixel of it still gets
-        // a pixel. Otherwise quiet passages read as gaps in the file rather than
-        // as quiet passages.
-        const float top    = middle - high * halfHeight;
-        const float bottom = middle - low  * halfHeight;
+        // Buckets hold near enough the same number of samples each, so the
+        // mean of their squares is the square of the column's RMS.
+        const float rms = std::sqrt (meanSquare / (float) (lastBucket - firstBucket));
 
+        // Peaks first, faint: the outline says where the limiter was working.
+        // The RMS over it, solid: that is the part that moves between a verse
+        // and a chorus, and the part the eye should land on. Both get at least
+        // a pixel wherever there is signal, so quiet passages read as quiet
+        // rather than as gaps in the file.
+        const float top    = middle - juce::jmin (high * scale, halfHeight);
+        const float bottom = middle + juce::jmin (-low * scale, halfHeight);
+
+        g.setColour (peakColour);
         g.fillRect ((float) x, top, 1.0f, juce::jmax (1.0f, bottom - top));
+
+        const float rmsHalf = juce::jmax (0.5f, rms * scale);
+
+        g.setColour (rmsColour);
+        g.fillRect ((float) x, middle - rmsHalf, 1.0f, rmsHalf * 2.0f);
     }
 }
 
@@ -143,20 +190,28 @@ void WaveformDisplay::paint (juce::Graphics& g)
 {
     const auto bounds = getLocalBounds().toFloat();
 
-    g.setColour (panel);
+    g.setColour (card);
     g.fillRoundedRectangle (bounds, cornerRadius);
 
     if (clip == nullptr)
     {
         paintEmpty (g);
+        paintFrame (g);
         return;
     }
 
     if (! cacheValid)
         rebuildCache();
 
+    // Dimmed while A is playing. The waveform is B, and at full strength it is
+    // the brightest thing on the panel whichever side you are listening to;
+    // this way the panel's brightest shape changes when the sound does.
     if (cache.isValid())
+    {
+        g.setOpacity (active ? 1.0f : 0.45f);
         g.drawImageAt (cache, 0, 0);
+        g.setOpacity (1.0f);
+    }
 
     // Everything outside the region is veiled rather than hidden: it is still
     // the file, it is just not what is playing, and being able to see the shape
@@ -166,14 +221,14 @@ void WaveformDisplay::paint (juce::Graphics& g)
         const float left  = xFor (regionStart);
         const float right = xFor (regionEnd);
 
-        g.setColour (panel.withAlpha (0.78f));
+        g.setColour (card.withAlpha (0.72f));
         g.fillRect (0.0f, 0.0f, left, (float) getHeight());
         g.fillRect (right, 0.0f, (float) getWidth() - right, (float) getHeight());
 
         // Neutral, not accentA. Blue means A everywhere else on this panel, and
         // the loop region is a fact about B - borrowing the other side's colour
         // for it would be the panel telling a small lie every time you look at it.
-        g.setColour (text.withAlpha (0.06f));
+        g.setColour (text.withAlpha (0.05f));
         g.fillRect (left, 0.0f, right - left, (float) getHeight());
 
         g.setColour (text.withAlpha (0.9f));
@@ -182,10 +237,10 @@ void WaveformDisplay::paint (juce::Graphics& g)
         {
             g.fillRect (edge - 1.0f, 0.0f, 2.0f, (float) getHeight());
 
-            // Tabs, so the edges read as something to take hold of rather than
-            // as two lines that happen to be there.
-            g.fillRect (edge - 2.0f, 0.0f, 4.0f, 7.0f);
-            g.fillRect (edge - 2.0f, (float) getHeight() - 7.0f, 4.0f, 7.0f);
+            // Handles, so the edges read as something to take hold of rather
+            // than as two lines that happen to be there.
+            g.fillRoundedRectangle (edge - 3.5f, 0.0f, 7.0f, 14.0f, 3.5f);
+            g.fillRoundedRectangle (edge - 3.5f, (float) getHeight() - 14.0f, 7.0f, 14.0f, 3.5f);
         }
     }
 
@@ -198,18 +253,35 @@ void WaveformDisplay::paint (juce::Graphics& g)
 
     if (playheadX >= 0.0f && playheadX <= (float) getWidth())
     {
-        g.setColour (text.withAlpha (transportRunning ? 0.55f : 0.22f));
-        g.fillRect (playheadX, 0.0f, 1.0f, (float) getHeight());
+        g.setColour (text.withAlpha (transportRunning ? 0.7f : 0.25f));
+        g.fillRect (playheadX - 0.5f, 0.0f, 1.5f, (float) getHeight());
     }
 
-    g.setColour (background.withAlpha (0.6f));
+    paintFrame (g);
+}
+
+void WaveformDisplay::paintFrame (juce::Graphics& g)
+{
+    // Drawn last, over the veil and the handles, so the corners stay round
+    // whatever is painted under them.
+    const auto bounds = getLocalBounds().toFloat();
+
+    juce::Path outside;
+    outside.addRectangle (bounds);
+    outside.setUsingNonZeroWinding (false);
+    outside.addRoundedRectangle (bounds, cornerRadius);
+
+    g.setColour (background);
+    g.fillPath (outside);
+
+    g.setColour (outline);
     g.drawRoundedRectangle (bounds.reduced (0.5f), cornerRadius, 1.0f);
 }
 
 void WaveformDisplay::paintEmpty (juce::Graphics& g)
 {
     g.setColour (dimText);
-    g.setFont (uiFont (12.0f));
+    g.setFont (uiFont (13.0f));
     // Not "no reference loaded" - the info line directly below already says
     // that, and the button below that says it a third time. What nothing else on
     // the panel says is what this strip is for once a file is in it.

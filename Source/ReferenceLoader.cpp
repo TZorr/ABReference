@@ -491,14 +491,16 @@ void ReferenceLoader::summarise (ReferenceClip& clip)
 {
     // A third pass over the same buffer, on the same thread, for the same
     // reason as the first two: the panel must never walk the audio itself.
-    // Peaks rather than RMS, because the question the picture answers is "where
-    // does this file have its sections" and a peak envelope draws that at a
-    // glance while an RMS envelope draws a slug.
+    // Peaks and RMS both: the peaks are the outline, the RMS is the body. On
+    // an unmastered file the peaks alone would show the sections, but a
+    // reference is a finished master, and after a limiter the peak envelope is
+    // a flat bar while the RMS still rises and falls with the arrangement.
     const int length = clip.audio.getNumSamples();
     const int channels = clip.audio.getNumChannels();
 
     clip.waveMin.fill (0.0f);
     clip.waveMax.fill (0.0f);
+    clip.waveRms.fill (0.0f);
 
     if (length <= 0 || channels <= 0)
         return;
@@ -516,19 +518,25 @@ void ReferenceLoader::summarise (ReferenceClip& clip)
         const int start = (int) first;
         const int count = (int) juce::jmax ((int64_t) 1, last - first);
 
+        const int available = juce::jmin (count, length - start);
+
         float low = 0.0f, high = 0.0f;
+        double sumOfSquares = 0.0;
 
         for (int ch = 0; ch < channels; ++ch)
         {
-            const auto range = juce::FloatVectorOperations::findMinAndMax (
-                                   clip.audio.getReadPointer (ch, start),
-                                   juce::jmin (count, length - start));
+            const float* samples = clip.audio.getReadPointer (ch, start);
+            const auto range = juce::FloatVectorOperations::findMinAndMax (samples, available);
 
             low  = juce::jmin (low,  range.getStart());
             high = juce::jmax (high, range.getEnd());
+
+            for (int i = 0; i < available; ++i)
+                sumOfSquares += (double) samples[i] * (double) samples[i];
         }
 
         clip.waveMin[(size_t) bucket] = low;
         clip.waveMax[(size_t) bucket] = high;
+        clip.waveRms[(size_t) bucket] = (float) std::sqrt (sumOfSquares / (double) (available * channels));
     }
 }

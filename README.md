@@ -2,7 +2,7 @@
 
 A mastering A/B plugin for macOS: Audio Unit, VST3 and Standalone.
 
-<img src="screenshot.png" width="360" alt="AB Reference">
+<img src="screenshot.png" width="600" alt="AB Reference">
 
 No network code, no telemetry, no account. `JUCE_USE_CURL=0` and
 `JUCE_WEB_BROWSER=0` are set at the build level, not just left unused.
@@ -81,7 +81,7 @@ plugins, a Developer ID Installer certificate for the package, and notarisation.
 | **Offset** | Shifts the reference along the timeline. Also the correction for host PDC quirks. |
 | **Mono** | Sums what you are hearing to mono. Bass and phase problems show up there and nowhere else. |
 | **Loop** | Repeat the reference instead of falling silent at its end. |
-| **Waveform** | The reference, drawn. Drag across it to loop a section; drag either edge to move it; click once to go back to the whole file. Selecting a section switches Loop on. |
+| **Waveform** | The reference, drawn: RMS as the solid body, peaks as the faint outline, scaled to the reference's own loudest stretch so quiet and loud sections of a finished master are told apart. Dimmed while you listen to A. Drag across it to loop a section; drag either edge to move it; click once to go back to the whole file. Selecting a section switches Loop on. |
 | **Reset** | Clears integrated LUFS and the held true peak on both sides. |
 
 The reference follows the timeline: reference sample 0 sits at timeline position 0,

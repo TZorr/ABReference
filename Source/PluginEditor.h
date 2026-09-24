@@ -18,6 +18,12 @@
 //  their sum are all on the panel, and the reference's own loudness sits next
 //  to the loudness it is being played at.
 //
+//  The layout is wide rather than tall: the switch in a column on the left, the
+//  waveform taking the rest of the width beside it, and the numbers and the
+//  controls in two cards underneath. The waveform is the one element whose
+//  usefulness grows with its size - a finished master drawn 76 pixels tall is a
+//  bar - and a plugin window has far more width to give than height.
+//
 //  Nothing here touches the audio thread. Values arrive as atomics that the
 //  processor publishes, pulled by a 30 Hz timer.
 //
@@ -26,6 +32,7 @@
 
 #include <array>
 
+#include "ABLookAndFeel.h"
 #include "PluginProcessor.h"
 #include "ReferenceSlotButton.h"
 #include "WaveformDisplay.h"
@@ -67,13 +74,19 @@ private:
     void setLoopRegion (double startSeconds, double endSeconds);
     juce::String describeLoopRegion() const;
 
+    void paintHeader (juce::Graphics&);
+    void paintCard (juce::Graphics&, juce::Rectangle<int>);
     void paintMeterTable (juce::Graphics&);
+    void refreshSwitchCaptions();
     juce::String describeReference() const;
 
     static juce::String formatLufs (float value);
     static juce::String formatDb (float value, bool withSign = false);
 
     ABReferenceProcessor& plugin;
+
+    // Declared before every component it draws, so it is destroyed after them.
+    ABLookAndFeel lookAndFeel;
 
     juce::TextButton aButton { "A" }, bButton { "B" };
     /** Three slots where one file button used to be, in the same row and the
@@ -106,9 +119,10 @@ private:
 
     std::unique_ptr<juce::FileChooser> fileChooser;
 
-    juce::Rectangle<int> meterArea;
+    juce::Rectangle<int> headerArea, meterArea, controlsArea;
 
     bool dragHighlight = false;
+    bool lastTransportRunning = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ABReferenceEditor)
 };

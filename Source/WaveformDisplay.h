@@ -17,8 +17,10 @@
 //  makes the region survivable as automation, state, and undo without this file
 //  having an opinion about any of them.
 //
-//  What it draws is the clip's own min/max envelope, built once on the loader
-//  thread. This component never reads the audio buffer - at 30 Hz that would be
+//  What it draws is the clip's own envelopes, built once on the loader thread:
+//  the RMS as a solid body inside a faint peak outline. The peaks alone drew a
+//  finished master as one flat orange bar, because a limiter puts every peak
+//  within a dB of the top; the RMS is what shows the quiet intro as quiet. This component never reads the audio buffer - at 30 Hz that would be
 //  a walk over up to half a gigabyte per second for a picture that has not
 //  changed since the file was loaded.
 //
@@ -50,6 +52,10 @@ public:
     void setRegion (double startSeconds, double endSeconds);
 
     void setPlayhead (double seconds, bool transportRunning);
+
+    /** False while A is what is playing. The waveform is drawn at reduced
+        strength then, because it is a picture of B. */
+    void setActive (bool isActive);
 
     //==============================================================================
     // Reported to the editor, which owns the parameters.
@@ -83,6 +89,7 @@ private:
 
     void rebuildCache();
     void paintEmpty (juce::Graphics&);
+    void paintFrame (juce::Graphics&);
 
     double secondsAt (int x) const;
     float  xFor (double seconds) const;
@@ -103,6 +110,7 @@ private:
     double regionStart = 0.0, regionEnd = 0.0;   // seconds
     double playhead = 0.0;
     bool   transportRunning = false;
+    bool   active = true;
 
     Drag drag = Drag::none;
     double dragAnchor = 0.0;     // seconds, the edge the drag started from
