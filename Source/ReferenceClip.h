@@ -52,6 +52,13 @@ public:
     float integratedLufs = kLoudnessSilence;
     float truePeakDb     = -200.0f;
 
+    /** The same file folded to mono, (L + R) / 2 measured as one channel - what
+        a mono output plays. The level match on a mono bus is made against this
+        one, not the stereo figure: folding loses up to 3 dB on a wide master
+        and nothing on a narrow one, so one fixed correction would be right for
+        neither. */
+    float integratedLufsMono = kLoudnessSilence;
+
     /** A min/max envelope of the whole file, and an RMS envelope inside it,
         for the panel to draw without ever touching the audio buffer. Both
         channels go into the same arrays: at the size this is drawn a second lane

@@ -7,6 +7,8 @@
 
 #include "TruePeakMeter.h"
 
+#include <array>
+
 ReferenceLoader::ReferenceLoader (Listener& listenerToUse)
     : juce::Thread ("AB Reference reference loader"),
       listener (listenerToUse)
@@ -480,6 +482,33 @@ void ReferenceLoader::measure (ReferenceClip& clip)
     loudness.prepare (clip.playbackSampleRate, clip.audio.getNumChannels());
     loudness.processBuffer (clip.audio);
     clip.integratedLufs = loudness.getIntegratedLufs();
+
+    // The mono fold, in chunks: a whole-file mono copy of a 30 minute reference
+    // at 96 kHz would be another 690 MB for the length of one measurement.
+    {
+        LoudnessMeter mono;
+        mono.prepare (clip.playbackSampleRate, 1);
+
+        constexpr int chunk = 8192;
+        std::array<float, chunk> folded {};
+
+        const int length = clip.audio.getNumSamples();
+        const float* left  = clip.audio.getReadPointer (0);
+        const float* right = clip.audio.getReadPointer (juce::jmin (1, clip.audio.getNumChannels() - 1));
+
+        for (int start = 0; start < length; start += chunk)
+        {
+            const int count = juce::jmin (chunk, length - start);
+
+            for (int i = 0; i < count; ++i)
+                folded[(size_t) i] = (left[start + i] + right[start + i]) * 0.5f;
+
+            const float* pointers[] { folded.data() };
+            mono.processBlock (pointers, 1, count);
+        }
+
+        clip.integratedLufsMono = mono.getIntegratedLufs();
+    }
 
     TruePeakMeter truePeak;
     truePeak.prepare (clip.audio.getNumChannels(), 8192);

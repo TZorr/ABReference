@@ -24,8 +24,21 @@ namespace ABParams
     inline constexpr const char* levelMatch = "levelMatch";
     inline constexpr const char* trimDb     = "trimDb";
     inline constexpr const char* offsetMs   = "offsetMs";
-    inline constexpr const char* monoSum    = "monoSum";
+    inline constexpr const char* monitor    = "monitorMode";
     inline constexpr const char* loop       = "loop";
+
+    /** The on/off Mono switch this plugin had until 0.4. No longer a parameter;
+        the id is kept only so setStateInformation can turn an old session's
+        "Mono on" into Monitor = Mid. A retyped parameter under the old id would
+        have been simpler and wrong: an automation lane written against the
+        switch sends 1.0 for "on", which on a three-way choice means Side. */
+    inline constexpr const char* legacyMonoSum = "monoSum";
+
+    /** What the output carries after the switch. Stereo leaves it alone, Mid is
+        the old mono sum, Side is the difference - both of the last two as dual
+        mono, the same signal on both speakers. */
+    enum class Monitor { stereo = 0, mid, side };
+    inline const juce::StringArray monitorNames { "Stereo", "Mid", "Side" };
     inline constexpr const char* refSlot    = "refSlot";
     inline constexpr const char* bypass     = "bypass";
 

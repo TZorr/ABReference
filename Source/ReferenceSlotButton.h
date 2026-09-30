@@ -19,7 +19,7 @@
 
 #pragma once
 
-#include "Palette.h"
+#include "UI/Palette.h"
 #include "ReferenceClip.h"
 
 class ReferenceSlotButton : public juce::Component,

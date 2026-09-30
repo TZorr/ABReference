@@ -89,7 +89,6 @@ private:
 
     void rebuildCache();
     void paintEmpty (juce::Graphics&);
-    void paintFrame (juce::Graphics&);
 
     double secondsAt (int x) const;
     float  xFor (double seconds) const;

@@ -27,6 +27,8 @@
 
 #include "ParameterIds.h"
 
+#include <bit>
+#include <cstdint>
 #include <cstdio>
 
 namespace
@@ -133,11 +135,253 @@ namespace
         strip.mouseUp   (eventAt (strip, toX, 1));
         return true;
     }
+
+    //==========================================================================
+    // --layouts: the processor on all three buses it accepts, the monitor, and
+    // an old session's Mono switch. Here rather than in MeterCheck because this
+    // is the only target that links the processor.
+    int layoutFailures = 0;
+
+    void expectLayout (bool condition, const char* what)
+    {
+        std::printf ("  %s  %s\n", condition ? "PASS" : "FAIL", what);
+
+        if (! condition)
+            ++layoutFailures;
+    }
+
+    bool sameBitsLayout (float a, float b) noexcept
+    {
+        return std::bit_cast<std::uint32_t> (a) == std::bit_cast<std::uint32_t> (b);
+    }
+
+    void fillNoise (juce::AudioBuffer<float>& buffer, int seed, int channels)
+    {
+        juce::Random random (seed);
+
+        for (int ch = 0; ch < channels; ++ch)
+            for (int n = 0; n < buffer.getNumSamples(); ++n)
+                buffer.setSample (ch, n, (random.nextFloat() * 2.0f - 1.0f) * 0.25f);
+    }
+
+    void setPlain (ABReferenceProcessor& processor, const char* id, float value)
+    {
+        auto* parameter = processor.apvts.getParameter (id);
+        parameter->setValueNotifyingHost (parameter->convertTo0to1 (value));
+    }
+
+    /** Prepares a processor on the given bus, loads the demo reference into
+        slot 1, plays eight seconds of A - the demo tone, both channels alike -
+        and returns the level match it settles on. */
+    float settledMatchOn (int inputs, int outputs, const juce::File& reference)
+    {
+        ABReferenceProcessor processor;
+
+        juce::AudioProcessor::BusesLayout layout;
+        layout.inputBuses.add  (inputs  == 1 ? juce::AudioChannelSet::mono() : juce::AudioChannelSet::stereo());
+        layout.outputBuses.add (outputs == 1 ? juce::AudioChannelSet::mono() : juce::AudioChannelSet::stereo());
+        processor.setBusesLayout (layout);
+        processor.prepareToPlay (48000.0, 512);
+
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+        processor.loadReference (0, reference);
+
+        const auto deadline = juce::Time::getMillisecondCounter() + 15000;
+
+        while (processor.getSelectedClip() == nullptr && juce::Time::getMillisecondCounter() < deadline)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+
+        juce::AudioBuffer<float> buffer (juce::jmax (inputs, outputs), 512);
+        juce::MidiBuffer midi;
+
+        for (int block = 0; block < 48000 * 8 / 512; ++block)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const double t = (block * 512 + n) / 48000.0;
+                const auto value = (float) (0.07 * std::sin (juce::MathConstants<double>::twoPi * 220.0 * t));
+
+                for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                    buffer.setSample (ch, n, value);
+            }
+
+            processor.processBlock (buffer, midi);
+        }
+
+        return processor.getMatchDb();
+    }
+
+    int runLayoutChecks()
+    {
+        std::printf ("Bus layouts, monitor and old sessions:\n");
+
+        using Set = juce::AudioChannelSet;
+
+        auto supports = [] (const Set& in, const Set& out)
+        {
+            ABReferenceProcessor processor;
+            juce::AudioProcessor::BusesLayout layout;
+            layout.inputBuses.add (in);
+            layout.outputBuses.add (out);
+            return processor.checkBusesLayoutSupported (layout);
+        };
+
+        expectLayout (supports (Set::stereo(), Set::stereo()), "accepts stereo in, stereo out");
+        expectLayout (supports (Set::mono(),   Set::stereo()), "accepts mono in, stereo out");
+        expectLayout (supports (Set::mono(),   Set::mono()),   "accepts mono in, mono out");
+        expectLayout (! supports (Set::stereo(), Set::mono()), "refuses stereo in, mono out");
+
+        juce::MidiBuffer midi;
+
+        // Mono in, stereo out: the second channel arrives as whatever the host
+        // left in it and must leave as a copy of the first.
+        {
+            ABReferenceProcessor processor;
+            juce::AudioProcessor::BusesLayout layout;
+            layout.inputBuses.add (Set::mono());
+            layout.outputBuses.add (Set::stereo());
+            processor.setBusesLayout (layout);
+            processor.prepareToPlay (48000.0, 512);
+
+            juce::AudioBuffer<float> buffer (2, 512), original (2, 512);
+            fillNoise (buffer, 1, 2);
+            original.makeCopyOf (buffer);
+            processor.processBlock (buffer, midi);
+
+            bool left = true, copied = true;
+
+            for (int n = 0; n < 512; ++n)
+            {
+                left   = left   && sameBitsLayout (buffer.getSample (0, n), original.getSample (0, n));
+                copied = copied && sameBitsLayout (buffer.getSample (1, n), original.getSample (0, n));
+            }
+
+            expectLayout (left,   "[1,2] on A: the input channel is untouched");
+            expectLayout (copied, "[1,2] on A: the right channel is a copy of it, not silence");
+        }
+
+        // Mono in, mono out: A through the stereo engine and back is x again.
+        {
+            ABReferenceProcessor processor;
+            juce::AudioProcessor::BusesLayout layout;
+            layout.inputBuses.add (Set::mono());
+            layout.outputBuses.add (Set::mono());
+            processor.setBusesLayout (layout);
+            processor.prepareToPlay (48000.0, 512);
+
+            juce::AudioBuffer<float> buffer (1, 512), original (1, 512);
+            fillNoise (buffer, 2, 1);
+            original.makeCopyOf (buffer);
+            processor.processBlock (buffer, midi);
+
+            bool identical = true;
+
+            for (int n = 0; n < 512; ++n)
+                identical = identical && sameBitsLayout (buffer.getSample (0, n), original.getSample (0, n));
+
+            expectLayout (identical, "[1,1] on A: bit for bit");
+
+            // Side of a mono signal is nothing - the one thing a mono Side can say.
+            setPlain (processor, ABParams::monitor, (float) ABParams::Monitor::side);
+
+            for (int block = 0; block < 4; ++block)
+            {
+                fillNoise (buffer, 3 + block, 1);
+                processor.processBlock (buffer, midi);
+            }
+
+            expectLayout (buffer.getMagnitude (0, 512) < 1.0e-7f, "[1,1] Side of a mono signal is silence");
+        }
+
+        // Stereo, Mid: the monitor reaches the output through the real processBlock.
+        {
+            ABReferenceProcessor processor;
+            processor.setPlayConfigDetails (2, 2, 48000.0, 512);
+            processor.prepareToPlay (48000.0, 512);
+            setPlain (processor, ABParams::monitor, (float) ABParams::Monitor::mid);
+
+            juce::AudioBuffer<float> buffer (2, 512), original (2, 512);
+
+            for (int block = 0; block < 4; ++block)
+            {
+                fillNoise (buffer, 10 + block, 2);
+                original.makeCopyOf (buffer);
+                processor.processBlock (buffer, midi);
+            }
+
+            double worst = 0.0;
+
+            for (int n = 0; n < 512; ++n)
+            {
+                const double mid = 0.5 * ((double) original.getSample (0, n) + original.getSample (1, n));
+                worst = juce::jmax (worst, std::abs (buffer.getSample (0, n) - mid), std::abs (buffer.getSample (1, n) - mid));
+            }
+
+            expectLayout (worst < 1.0e-6, "[2,2] Monitor = Mid gives L = R = (L + R) / 2");
+        }
+
+        // An old session with Mono on comes back as Mid; with Mono off, Stereo.
+        for (const bool monoWasOn : { true, false })
+        {
+            ABReferenceProcessor source;
+            juce::MemoryBlock block;
+            source.getStateInformation (block);
+
+            auto xml = juce::AudioProcessor::getXmlFromBinary (block.getData(), (int) block.getSize());
+
+            for (auto* child : xml->getChildIterator())
+                if (child->getStringAttribute ("id") == ABParams::monitor)
+                {
+                    xml->removeChildElement (child, true);
+                    break;
+                }
+
+            auto* legacy = xml->createNewChildElement ("PARAM");
+            legacy->setAttribute ("id", ABParams::legacyMonoSum);
+            legacy->setAttribute ("value", monoWasOn ? 1.0 : 0.0);
+
+            juce::MemoryBlock old;
+            juce::AudioProcessor::copyXmlToBinary (*xml, old);
+
+            ABReferenceProcessor restored;
+            setPlain (restored, ABParams::monitor, (float) ABParams::Monitor::side);   // so a no-op cannot pass
+            restored.setStateInformation (old.getData(), (int) old.getSize());
+
+            const auto monitor = (int) restored.apvts.getRawParameterValue (ABParams::monitor)->load();
+
+            expectLayout (monitor == (monoWasOn ? 1 : 0),
+                          monoWasOn ? "an old session's Mono on restores as Mid"
+                                    : "an old session's Mono off restores as Stereo");
+        }
+
+        // The level match on a mono bus is made against the reference's mono
+        // fold, so the same material gets the same match whichever bus it is on.
+        {
+            const auto reference = writeDemoReference ("ABReferenceLayouts");
+            const float stereoMatch = settledMatchOn (2, 2, reference);
+            const float monoMatch   = settledMatchOn (1, 1, reference);
+            const float mixedMatch  = settledMatchOn (1, 2, reference);
+
+            std::printf ("  match: [2,2] %+.3f dB   [1,1] %+.3f dB   [1,2] %+.3f dB\n",
+                         stereoMatch, monoMatch, mixedMatch);
+
+            expectLayout (std::abs (stereoMatch) > 0.5f, "the demo reference needs a real match (not a vacuous test)");
+            expectLayout (std::abs (monoMatch - stereoMatch) < 0.1f,
+                          "[1,1] matches like [2,2] for material that is the same on both channels");
+            expectLayout (std::abs (mixedMatch - stereoMatch) < 0.01f, "[1,2] matches exactly like [2,2]");
+        }
+
+        std::printf ("%s\n", layoutFailures == 0 ? "All layout checks passed" : "LAYOUT CHECKS FAILED");
+        return layoutFailures == 0 ? 0 : 1;
+    }
 }
 
 int main (int argc, char** argv)
 {
     const juce::ScopedJuceInitialiser_GUI juceInitialiser;
+
+    if (argc > 1 && juce::String (argv[1]) == "--layouts")
+        return runLayoutChecks();
 
     const juce::File output = argc > 1 ? juce::File (juce::String (argv[1]))
                                        : juce::File::getCurrentWorkingDirectory().getChildFile ("editor.png");

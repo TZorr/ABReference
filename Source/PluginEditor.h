@@ -18,11 +18,14 @@
 //  their sum are all on the panel, and the reference's own loudness sits next
 //  to the loudness it is being played at.
 //
-//  The layout is wide rather than tall: the switch in a column on the left, the
-//  waveform taking the rest of the width beside it, and the numbers and the
-//  controls in two cards underneath. The waveform is the one element whose
-//  usefulness grows with its size - a finished master drawn 76 pixels tall is a
-//  bar - and a plugin window has far more width to give than height.
+//  The look is Kitbox's and Rackbox's (since 0.4): a light body, recessed grey
+//  sections, and one near-black display with orange type for everything that
+//  is a reading rather than a control. The switch is two pads on the left, the
+//  display with the reference's waveform takes the rest of the width beside
+//  them, and the numbers and the controls sit in two sections underneath. The
+//  waveform is still the element whose usefulness grows with its size - a
+//  finished master drawn 76 pixels tall is a bar - and a plugin window has far
+//  more width to give than height.
 //
 //  Nothing here touches the audio thread. Values arrive as atomics that the
 //  processor publishes, pulled by a 30 Hz timer.
@@ -32,10 +35,13 @@
 
 #include <array>
 
-#include "ABLookAndFeel.h"
 #include "PluginProcessor.h"
 #include "ReferenceSlotButton.h"
 #include "WaveformDisplay.h"
+#include "UI/ABPad.h"
+#include "UI/ChoiceButtons.h"
+#include "UI/FlatToggle.h"
+#include "UI/Knob.h"
 
 class ABReferenceEditor : public juce::AudioProcessorEditor,
                          public juce::FileDragAndDropTarget,
@@ -74,55 +80,58 @@ private:
     void setLoopRegion (double startSeconds, double endSeconds);
     juce::String describeLoopRegion() const;
 
-    void paintHeader (juce::Graphics&);
-    void paintCard (juce::Graphics&, juce::Rectangle<int>);
+    void paintWordmark (juce::Graphics&);
+    void paintDisplay (juce::Graphics&);
+    void paintSection (juce::Graphics&, juce::Rectangle<int>, const juce::String& title);
     void paintMeterTable (juce::Graphics&);
+    void paintMatchReadout (juce::Graphics&);
+    void paintFooter (juce::Graphics&);
     void refreshSwitchCaptions();
+    void setMonitor (int mode);
     juce::String describeReference() const;
+    juce::String describeLoop() const;
 
     static juce::String formatLufs (float value);
     static juce::String formatDb (float value, bool withSign = false);
+    static juce::String formatTime (double seconds);
 
     ABReferenceProcessor& plugin;
 
-    // Declared before every component it draws, so it is destroyed after them.
-    ABLookAndFeel lookAndFeel;
+    ABPad aPad { "A", "Input", Palette::lamp }, bPad { "B", "Reference", Palette::accentDark };
 
-    juce::TextButton aButton { "A" }, bButton { "B" };
     /** Three slots where one file button used to be, in the same row and the
         same height. See ReferenceSlotButton for why the gestures do the work
         that widgets would normally do. */
     std::array<std::unique_ptr<ReferenceSlotButton>, ABParams::numSlots> slotButtons;
-    juce::TextButton resetButton { "Reset" };
+    FlatToggle loadButton { "+ Load" };
+    FlatToggle resetButton { "Reset" };
 
-    juce::ToggleButton levelMatchButton { "Level Match" };
-    juce::ToggleButton monoButton { "Mono" };
-    juce::ToggleButton loopButton { "Loop" };
+    FlatToggle levelMatchButton { "Level Match" };
+    FlatToggle loopButton { "Loop" };
+    ChoiceButtons monitorButtons;
 
-    juce::Slider trimSlider { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
-    juce::Slider offsetSlider { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
-
-    juce::Label trimLabel { {}, "Trim" };
-    juce::Label offsetLabel { {}, "Offset" };
-    juce::Label matchLabel;
-    juce::Label loopRegionLabel;
-    juce::Label infoLabel;
-    juce::Label statusLabel;
+    Knob trimKnob { "Trim", true };
+    Knob offsetKnob { "Offset", true };
 
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
-    using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
 
-    std::unique_ptr<ButtonAttachment> levelMatchAttachment, monoAttachment, loopAttachment;
-    std::unique_ptr<SliderAttachment> trimAttachment, offsetAttachment;
+    std::unique_ptr<ButtonAttachment> levelMatchAttachment, loopAttachment;
 
     WaveformDisplay waveform;
 
     std::unique_ptr<juce::FileChooser> fileChooser;
 
-    juce::Rectangle<int> headerArea, meterArea, controlsArea;
+    // Painted areas, set in resized().
+    juce::Rectangle<int> wordmarkArea, displayArea, loudnessArea, matchArea,
+                         meterTableArea, matchReadoutArea, monitorLabelArea, footerArea;
+
+    // What the display and the footer say, cached by the timer so paint does
+    // not rebuild strings, and so a repaint happens only when one changed.
+    juce::String displayTitle, displayInfo, displayLoop, displayTime, statusText;
+    bool statusWarns = false;
+    bool transportRunning = false;
 
     bool dragHighlight = false;
-    bool lastTransportRunning = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ABReferenceEditor)
 };

@@ -2,9 +2,9 @@
 //  ABEngine.h
 //  AB Reference
 //
-//  The switch, the gain that makes the switch mean something, and the mono
-//  button - all three of them ramped, because every one of them is a
-//  discontinuity if it is not.
+//  The switch, the gain that makes the switch mean something, and the monitor
+//  (Stereo / Mid / Side) - all three of them ramped, because every one of them
+//  is a discontinuity if it is not.
 //
 //  Three decisions worth defending:
 //
@@ -37,12 +37,14 @@
 
 #pragma once
 
+#include <array>
+
 #include <juce_audio_basics/juce_audio_basics.h>
 
 class ABEngine
 {
 public:
-    ABEngine() = default;
+    ABEngine();
 
     void prepare (double sampleRate);
 
@@ -53,8 +55,9 @@ public:
     /** Audio thread. false = A, true = B. */
     void setTarget (bool wantB) noexcept { target = wantB ? 1.0f : 0.0f; }
 
-    /** Audio thread. 0 = stereo, 1 = summed to mono. Ramped like everything else. */
-    void setMonoAmount (float amount) noexcept { monoSum.setTargetValue (juce::jlimit (0.0f, 1.0f, amount)); }
+    /** Audio thread. 0 = stereo, 1 = mid, 2 = side (ABParams::Monitor). Ramped
+        like everything else. */
+    void setMonitorMode (int mode) noexcept;
 
     /** True when the fade has settled on A, which is the state in which the
         output is guaranteed bit-identical to the input. */
@@ -70,7 +73,8 @@ public:
                   int numSamples) noexcept;
 
 private:
-    void applyMonoSum (juce::AudioBuffer<float>& buffer, int numSamples) noexcept;
+    void applyMonitor (juce::AudioBuffer<float>& buffer, int numSamples) noexcept;
+    bool monitorIsStereo() const noexcept;
 
     // 8 ms. See the header comment - this number is a perceptual choice, not a
     // performance one, so it is not a parameter.
@@ -80,7 +84,13 @@ private:
     float target    = 0.0f;
     float increment = 1.0f;
 
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> monoSum;
+    // The monitor as a 2x2 matrix, L' = ll*L + lr*R and R' = rl*L + rr*R, each
+    // coefficient ramped on its own. Stereo is the identity, Mid is a quarter
+    // of the matrix at 0.5, Side the same with the right column negated. A
+    // matrix rather than two amounts because Mid -> Side has to travel straight
+    // between the two without passing through Stereo on the way.
+    std::array<juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>, 4> monitorMatrix;
+    int monitorMode = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ABEngine)
 };

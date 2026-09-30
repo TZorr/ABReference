@@ -76,10 +76,10 @@ plugins, a Developer ID Installer certificate for the package, and notarisation.
 |---|---|
 | **A / B** | The switch. Space or `B` toggles, `A` goes straight to A. 8 ms equal-power crossfade. |
 | **Slots 1 / 2 / 3** | Click to select a reference and hear it; `1` `2` `3` do the same. Double-click or right-click to load; right-click to clear that slot. Drop a file on a slot to load *that* slot; drop it anywhere else and it fills the first empty one. WAV, AIFF, FLAC, MP3, M4A, AAC. |
-| **Level Match** | Puts B at A's integrated loudness. The amount applied is shown next to it. |
-| **Trim** | Manual, ±12 dB, adds on top of the match. |
-| **Offset** | Shifts the reference along the timeline. Also the correction for host PDC quirks. |
-| **Mono** | Sums what you are hearing to mono. Bass and phase problems show up there and nowhere else. |
+| **Level Match** | Puts B at A's integrated loudness. The amount applied is shown in the small MATCH display beside the knobs, with the gain B is actually played at (match + trim) under it. |
+| **Trim** | Manual, ±12 dB, adds on top of the match. Click the value under the knob to type one; double-click the knob for 0. |
+| **Offset** | Shifts the reference along the timeline. Also the correction for host PDC quirks. Click the value to type it to the tenth of a millisecond. |
+| **Monitor** | **Stereo** / **Mid** / **Side**, for whatever you are hearing, A or B. Mid is the mono sum (L + R) / 2, where bass and phase problems show up and nowhere else; Side is the difference (L − R) / 2, where reverb, width and stereo tricks sit on their own. Both play on both speakers. Switching ramps over 8 ms. The meters keep measuring the untouched signals. Before 0.4 this was an on/off Mono button; a session saved with Mono on opens with Mid. |
 | **Loop** | Repeat the reference instead of falling silent at its end. |
 | **Waveform** | The reference, drawn: RMS as the solid body, peaks as the faint outline, scaled to the reference's own loudest stretch so quiet and loud sections of a finished master are told apart. Dimmed while you listen to A. Drag across it to loop a section; drag either edge to move it; click once to go back to the whole file. Selecting a section switches Loop on. |
 | **Reset** | Clears integrated LUFS and the held true peak on both sides. |
@@ -147,7 +147,7 @@ with.
 
 ## Verification
 
-`MeterCheck` (which `Scripts/build.sh` runs) checks 123 things against sources
+`MeterCheck` (which `Scripts/build.sh` runs) checks 130 things against sources
 outside this project — BS.1770-4, EBU Tech 3341, and arithmetic on the definitions.
 It has already found two real bugs:
 
@@ -167,6 +167,14 @@ region out with simulated mouse events**, and checks that the parameters moved a
 that Loop switched itself on. Setting those parameters directly would have produced
 the same picture and proved nothing; the gesture is the half of the feature worth
 testing, and driving it this way caught a real ordering bug the first time it ran.
+
+`EditorShot --layouts` runs the real processor on all three buses it accepts. On A
+it checks the output bit for bit on mono/mono and that a mono input reaches both
+speakers on mono/stereo. It checks that Monitor = Mid reaches the output, that a
+session saved with the old Mono switch opens on Mid (or Stereo), and that the same
+material gets the same level match on a mono bus as on a stereo one. That last
+check is the one that matters: before the reference's mono fold was measured, a
+mono bus would have matched about 3 dB off.
 
 It also used to append each render to the previous one — `createOutputStream` opens
 an existing file at its end, and a decoder stops at the first image in the file, so
@@ -220,8 +228,13 @@ dialog.
 
 ## Limits
 
-- Stereo in, stereo out. Mono references are duplicated; files with more than two
-  channels are reduced to the first two.
+- Stereo in, stereo out on a master; on a mono track also mono in with stereo out,
+  and mono in with mono out (since 0.4). Inside, everything runs in stereo: a mono
+  input is heard on both speakers, and on a mono output the reference is folded to
+  mono, metered as one channel, and level-matched against its own mono fold (the
+  fold is measured when the file loads), so the match compares what you hear.
+- Mono references are duplicated; files with more than two channels are reduced to
+  the first two.
 - References up to 30 minutes each, and 768 MB of decoded audio across all three
   slots together. A load that would exceed the budget is refused with a message
   saying what the other slots are holding, rather than being truncated.

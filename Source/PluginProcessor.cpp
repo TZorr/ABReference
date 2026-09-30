@@ -30,8 +30,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout ABReferenceProcessor::create
         NormalisableRange<float> (ABParams::offsetMinMs, ABParams::offsetMaxMs, 0.1f), 0.0f,
         AudioParameterFloatAttributes().withLabel ("ms")));
 
-    layout.add (std::make_unique<AudioParameterBool> (
-        ParameterID { ABParams::monoSum, ABParams::version }, "Mono", false));
+    layout.add (std::make_unique<AudioParameterChoice> (
+        ParameterID { ABParams::monitor, ABParams::version }, "Monitor",
+        ABParams::monitorNames, (int) ABParams::Monitor::stereo));
 
     layout.add (std::make_unique<AudioParameterBool> (
         ParameterID { ABParams::loop, ABParams::version }, "Loop Reference", false));
@@ -78,7 +79,7 @@ ABReferenceProcessor::ABReferenceProcessor()
     levelMatchParam = apvts.getRawParameterValue (ABParams::levelMatch);
     trimParam       = apvts.getRawParameterValue (ABParams::trimDb);
     offsetParam     = apvts.getRawParameterValue (ABParams::offsetMs);
-    monoParam       = apvts.getRawParameterValue (ABParams::monoSum);
+    monitorParam    = apvts.getRawParameterValue (ABParams::monitor);
     loopParam       = apvts.getRawParameterValue (ABParams::loop);
     slotParam       = apvts.getRawParameterValue (ABParams::refSlot);
 
@@ -119,6 +120,9 @@ void ABReferenceProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
     referenceScratch.setSize (2, currentBlockSize, false, true, true);
     referenceScratch.clear();
 
+    monoWork.setSize (2, currentBlockSize, false, true, true);
+    monoWork.clear();
+
     bus.prepare (sampleRate, currentBlockSize);
     bus.reset ((int) *slotParam);
 
@@ -148,10 +152,16 @@ void ABReferenceProcessor::releaseResources()
 
 bool ABReferenceProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
-    // Stereo only, in and out. A mastering reference is a stereo object and a
-    // mono version of this tool would be answering a question nobody asked.
-    return layouts.getMainInputChannelSet()  == juce::AudioChannelSet::stereo()
-        && layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+    // Stereo/stereo on a master, and the two mono shapes a DAW offers when
+    // the plugin goes on a mono track: mono in with mono out, and mono in with
+    // stereo out. The engine runs in stereo in all three; see process().
+    const auto& in  = layouts.getMainInputChannelSet();
+    const auto& out = layouts.getMainOutputChannelSet();
+    const auto mono = juce::AudioChannelSet::mono(), stereo = juce::AudioChannelSet::stereo();
+
+    return (in == stereo && out == stereo)
+        || (in == mono   && out == stereo)
+        || (in == mono   && out == mono);
 }
 
 //==============================================================================
@@ -174,8 +184,24 @@ void ABReferenceProcessor::process (juce::AudioBuffer<float>& buffer, bool bypas
 
     const int numSamples = buffer.getNumSamples();
 
-    for (int ch = getTotalNumInputChannels(); ch < getTotalNumOutputChannels(); ++ch)
-        buffer.clear (ch, 0, numSamples);
+    // Mono in, stereo out: JUCE leaves the second channel unspecified. A mono
+    // track is heard on both speakers, so the channel is a copy, not silence -
+    // cleared, A would play on the left only and meter 3 dB low, and the level
+    // match would be 3 dB wrong with it.
+    const int inputChannels = getTotalNumInputChannels();
+
+    for (int ch = inputChannels; ch < getTotalNumOutputChannels(); ++ch)
+    {
+        if (inputChannels == 1)
+            buffer.copyFrom (ch, 0, buffer, 0, 0, numSamples);
+        else
+            buffer.clear (ch, 0, numSamples);
+    }
+
+    // Mono out: everything is measured and matched as one channel, because
+    // that is what is heard. A is metered as the single channel it is below,
+    // and B is folded to mono before its meter and before the switch.
+    const bool monoOut = buffer.getNumChannels() < 2;
 
     bus.swapInPendingClips();
 
@@ -279,7 +305,9 @@ void ABReferenceProcessor::process (juce::AudioBuffer<float>& buffer, bool bypas
         {
             const auto* slotClip = bus.getActiveClip (i);
             const float aLufs = meterA.getIntegratedLufs();
-            const float bLufs = slotClip != nullptr ? slotClip->integratedLufs : kLoudnessSilence;
+            const float bLufs = slotClip == nullptr ? kLoudnessSilence
+                              : monoOut ? slotClip->integratedLufsMono
+                                        : slotClip->integratedLufs;
 
             // Three seconds of gated material before the match is allowed to
             // move. Computed from less, it lurches every time the arrangement
@@ -337,18 +365,47 @@ void ABReferenceProcessor::process (juce::AudioBuffer<float>& buffer, bool bypas
     // ---- Metering B on the bus output, which already carries each slot's own
     // match gain. Nothing to add afterwards, and it stays correct through a
     // crossfade, where two different gains are in play at once.
+    if (monoOut)
+    {
+        auto* left  = referenceScratch.getWritePointer (0);
+        auto* right = referenceScratch.getWritePointer (1);
+
+        for (int n = 0; n < numSamples; ++n)
+            left[n] = right[n] = (left[n] + right[n]) * 0.5f;
+    }
+
     meterB.processBlock (referenceScratch.getArrayOfReadPointers(),
-                         referenceScratch.getNumChannels(),
+                         monoOut ? 1 : referenceScratch.getNumChannels(),
                          numSamples);
 
-    engine.setMonoAmount (*monoParam > 0.5f ? 1.0f : 0.0f);
+    engine.setMonitorMode ((int) monitorParam->load());
 
     // Bypass is a fade to A rather than a jump to A. It reaches bit-identical
     // passthrough 8 ms later instead of immediately, and it gets there without
     // a step discontinuity - which is the trade every bypass switch worth using
     // makes.
     engine.setTarget (wantB && ! bypassed);
-    engine.process (buffer, referenceScratch, numSamples);
+
+    if (monoOut)
+    {
+        // A doubled, switched and monitored in stereo, then folded back. On A
+        // the fold is (x + x) / 2, which is x again bit for bit.
+        monoWork.copyFrom (0, 0, buffer, 0, 0, numSamples);
+        monoWork.copyFrom (1, 0, buffer, 0, 0, numSamples);
+
+        engine.process (monoWork, referenceScratch, numSamples);
+
+        auto* out = buffer.getWritePointer (0);
+        const auto* left  = monoWork.getReadPointer (0);
+        const auto* right = monoWork.getReadPointer (1);
+
+        for (int n = 0; n < numSamples; ++n)
+            out[n] = (left[n] + right[n]) * 0.5f;
+    }
+    else
+    {
+        engine.process (buffer, referenceScratch, numSamples);
+    }
 
     abPosition.store (engine.getPosition(), std::memory_order_relaxed);
 }
@@ -554,6 +611,23 @@ void ABReferenceProcessor::setStateInformation (const void* data, int sizeInByte
     // lost their reference.
     if (paths[0].isEmpty())
         paths[0] = state.getProperty (ABParams::propReferencePath, juce::String()).toString();
+
+    // Before 0.4 the monitor was an on/off Mono switch. "On" was the mono sum,
+    // which is Mid now; the old entry goes, so it is not carried along forever.
+    if (auto legacy = state.getChildWithProperty ("id", ABParams::legacyMonoSum); legacy.isValid())
+    {
+        if (! state.getChildWithProperty ("id", ABParams::monitor).isValid())
+        {
+            juce::ValueTree monitor ("PARAM");
+            monitor.setProperty ("id", ABParams::monitor, nullptr);
+            monitor.setProperty ("value", (float) legacy.getProperty ("value", 0.0f) > 0.5f
+                                              ? (float) ABParams::Monitor::mid
+                                              : (float) ABParams::Monitor::stereo, nullptr);
+            state.appendChild (monitor, nullptr);
+        }
+
+        state.removeChild (legacy, nullptr);
+    }
 
     apvts.replaceState (state);
 

@@ -44,51 +44,50 @@ void ReferenceSlotButton::setLoading (bool isLoading)
 //==============================================================================
 void ReferenceSlotButton::paint (juce::Graphics& g)
 {
+    // Rackbox's flat button: lit in the accent when selected, a darker grey
+    // under the mouse, an ink outline while a file is dragged over it.
     const auto bounds = getLocalBounds().toFloat();
     const bool empty  = clip == nullptr;
 
-    g.setColour (selected ? ABLook::accentB.withAlpha (0.16f)
-                          : ABLook::card.brighter (hovered ? 0.1f : 0.0f));
-    g.fillRoundedRectangle (bounds, ABLook::controlRadius);
+    g.setColour (selected ? Palette::accent : (hovered ? Palette::buttonHover : Palette::button));
+    g.fillRoundedRectangle (bounds, 5.0f);
 
-    g.setColour (dragOver ? ABLook::accentB
-                          : (selected ? ABLook::accentB.withAlpha (0.85f) : ABLook::outline));
-    g.drawRoundedRectangle (bounds.reduced (0.5f), ABLook::controlRadius, dragOver || selected ? 1.4f : 1.0f);
+    if (dragOver)
+    {
+        g.setColour (Palette::ink);
+        g.drawRoundedRectangle (bounds.reduced (1.0f), 5.0f, 2.0f);
+    }
 
-    auto area = getLocalBounds().reduced (10, 0);
+    const auto ink    = selected ? Palette::pad : Palette::ink;
+    const auto inkDim = selected ? Palette::pad.withAlpha (0.6f) : Palette::inkDim;
+
+    auto area = getLocalBounds().reduced (9, 0);
 
     // The number is always visible, loaded or not: it is what the 1/2/3 keys
     // and the automation lane refer to, so it has to be readable even when the
     // slot is empty and there is no name to hang it on.
-    auto badge = area.removeFromLeft (14);
-    g.setColour (selected ? ABLook::accentB : ABLook::dimText);
-    g.setFont (ABLook::uiFont (11.0f, juce::Font::bold));
-    g.drawText (juce::String (slot + 1), badge, juce::Justification::centredLeft);
+    g.setColour (ink);
+    g.setFont (Palette::mono (10.5f, true));
+    g.drawText (juce::String (slot + 1), area.removeFromLeft (10), juce::Justification::centredLeft);
 
-    area.removeFromLeft (4);
+    area.removeFromLeft (6);
 
-    if (loading)
+    if (loading || empty)
     {
-        g.setColour (ABLook::dimText);
-        g.setFont (ABLook::uiFont (12.0f));
-        g.drawText ("loading ...", area, juce::Justification::centredLeft);
+        g.setColour (inkDim);
+        g.setFont (Palette::label (9.5f));
+        g.drawText (loading ? "LOADING ..." : "EMPTY", area, juce::Justification::centredLeft);
         return;
     }
 
-    if (empty)
-    {
-        g.setColour (ABLook::dimText.withAlpha (0.7f));
-        g.setFont (ABLook::uiFont (12.5f, juce::Font::italic));
-        g.drawText ("empty", area, juce::Justification::centredLeft);
-        return;
-    }
-
-    g.setColour (selected ? ABLook::text : ABLook::text.withAlpha (0.85f));
-    g.setFont (ABLook::uiFont (12.5f));
-
+    // Mixed case, unlike every other button: a file name is information, and
+    // upper case would make two takes of the same master look alike.
+    //
     // Dropping the extension rather than the middle of the name: at this width
     // the informative part of "TheBiggerLights_master_v3.wav" is the front, and
     // every candidate file has one of four extensions anyway.
+    g.setColour (ink);
+    g.setFont (Palette::label (10.5f).withExtraKerningFactor (0.02f));
     g.drawText (clip->file.getFileNameWithoutExtension(),
                 area, juce::Justification::centredLeft, true);
 }

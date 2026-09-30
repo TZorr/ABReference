@@ -160,6 +160,10 @@ public:
         together or the pair stops making sense. */
     void resetMeters();
 
+    /** True on a mono output bus. The reference is then heard folded to mono,
+        and matched and metered that way. */
+    bool isMonoOutput() const { return getTotalNumOutputChannels() == 1; }
+
 private:
     //==============================================================================
     void process (juce::AudioBuffer<float>& buffer, bool bypassed);
@@ -182,6 +186,10 @@ private:
 
     juce::AudioBuffer<float> referenceScratch;
 
+    // Mono out only: A doubled to two channels so the engine, which is stereo
+    // throughout, has a pair to switch and to monitor. Folded back at the end.
+    juce::AudioBuffer<float> monoWork;
+
     double currentSampleRate = 44100.0;
     int    currentBlockSize  = 512;
 
@@ -191,7 +199,7 @@ private:
     std::atomic<float>* levelMatchParam = nullptr;
     std::atomic<float>* trimParam       = nullptr;
     std::atomic<float>* offsetParam     = nullptr;
-    std::atomic<float>* monoParam       = nullptr;
+    std::atomic<float>* monitorParam    = nullptr;
     std::atomic<float>* loopParam       = nullptr;
     std::atomic<float>* slotParam        = nullptr;
     std::array<std::atomic<float>*, ABParams::numSlots> loopStartParams {};

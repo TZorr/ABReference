@@ -5,16 +5,9 @@
 
 #include "WaveformDisplay.h"
 
-#include "Palette.h"
 #include "ParameterIds.h"
 #include "TextUtf8.h"
-
-using namespace ABLook;
-
-namespace
-{
-    constexpr float cornerRadius = cardRadius;
-}
+#include "UI/Palette.h"
 
 //==============================================================================
 WaveformDisplay::WaveformDisplay()
@@ -137,10 +130,10 @@ void WaveformDisplay::rebuildCache()
 
     const float scale = 0.8f * halfHeight / juce::jmax (loudestRms, 1.0e-4f);
 
-    const auto peakColour = accentB.withAlpha (0.24f);
-    const auto rmsColour  = accentB;
+    const auto peakColour = Palette::displayDim.withAlpha (0.55f);
+    const auto rmsColour  = Palette::displayText;
 
-    g.setColour (text.withAlpha (0.08f));
+    g.setColour (Palette::displayGrid);
     g.fillRect (0.0f, middle - 0.5f, (float) width, 1.0f);
 
     // One column of pixels per column of pixels, each summarising however many
@@ -188,20 +181,30 @@ void WaveformDisplay::rebuildCache()
 //==============================================================================
 void WaveformDisplay::paint (juce::Graphics& g)
 {
-    const auto bounds = getLocalBounds().toFloat();
-
-    g.setColour (card);
-    g.fillRoundedRectangle (bounds, cornerRadius);
+    // Square and borderless: the strip sits inside the panel's display, which
+    // draws the rounded frame, the file name and the lines of text around it.
+    g.fillAll (Palette::display);
 
     if (clip == nullptr)
     {
         paintEmpty (g);
-        paintFrame (g);
         return;
     }
 
     if (! cacheValid)
         rebuildCache();
+
+    // The region behind the waveform, a shade lighter than the display, so the
+    // part that is playing is lit from behind as well as drawn brighter.
+    const bool region = hasRegion();
+    const float left  = region ? xFor (regionStart) : 0.0f;
+    const float right = region ? xFor (regionEnd)   : 0.0f;
+
+    if (region)
+    {
+        g.setColour (Palette::displayGrid);
+        g.fillRect (left, 0.0f, right - left, (float) getHeight());
+    }
 
     // Dimmed while A is playing. The waveform is B, and at full strength it is
     // the brightest thing on the panel whichever side you are listening to;
@@ -215,76 +218,47 @@ void WaveformDisplay::paint (juce::Graphics& g)
 
     // Everything outside the region is veiled rather than hidden: it is still
     // the file, it is just not what is playing, and being able to see the shape
-    // of the rest is how you find the next section to loop.
-    if (hasRegion())
+    // of the rest is how you find the next section to loop. The veil is the
+    // display colour, so the orange outside turns to the display's dim orange.
+    if (region)
     {
-        const float left  = xFor (regionStart);
-        const float right = xFor (regionEnd);
-
-        g.setColour (card.withAlpha (0.72f));
+        g.setColour (Palette::display.withAlpha (0.6f));
         g.fillRect (0.0f, 0.0f, left, (float) getHeight());
         g.fillRect (right, 0.0f, (float) getWidth() - right, (float) getHeight());
 
-        // Neutral, not accentA. Blue means A everywhere else on this panel, and
-        // the loop region is a fact about B - borrowing the other side's colour
-        // for it would be the panel telling a small lie every time you look at it.
-        g.setColour (text.withAlpha (0.05f));
-        g.fillRect (left, 0.0f, right - left, (float) getHeight());
-
-        g.setColour (text.withAlpha (0.9f));
+        g.setColour (Palette::accent);
 
         for (const float edge : { left, right })
         {
-            g.fillRect (edge - 1.0f, 0.0f, 2.0f, (float) getHeight());
+            g.fillRect (edge - 0.75f, 0.0f, 1.5f, (float) getHeight());
 
             // Handles, so the edges read as something to take hold of rather
             // than as two lines that happen to be there.
-            g.fillRoundedRectangle (edge - 3.5f, 0.0f, 7.0f, 14.0f, 3.5f);
-            g.fillRoundedRectangle (edge - 3.5f, (float) getHeight() - 14.0f, 7.0f, 14.0f, 3.5f);
+            g.fillRoundedRectangle (edge - 3.0f, 0.0f, 6.0f, 7.0f, 1.0f);
+            g.fillRoundedRectangle (edge - 3.0f, (float) getHeight() - 7.0f, 6.0f, 7.0f, 1.0f);
         }
     }
 
-    // The playhead, thinner and dimmer than the region edges: the edges are the
-    // thing you take hold of, this is only information, and it has motion to
-    // carry attention without needing brightness as well. Dimmer again when the
-    // transport is stopped, because a bright line sitting still looks like a
-    // position and a dim one looks like the last position, which is what it is.
+    // The playhead in the pad colour, as on Kitbox's sample display: not
+    // orange, so it never reads as a region edge. Dimmer when the transport is
+    // stopped, because a bright line sitting still looks like a position and a
+    // dim one looks like the last position, which is what it is.
     const float playheadX = xFor (playhead);
 
     if (playheadX >= 0.0f && playheadX <= (float) getWidth())
     {
-        g.setColour (text.withAlpha (transportRunning ? 0.7f : 0.25f));
-        g.fillRect (playheadX - 0.5f, 0.0f, 1.5f, (float) getHeight());
+        g.setColour (Palette::padText.withAlpha (transportRunning ? 0.9f : 0.3f));
+        g.fillRect (playheadX - 0.75f, 0.0f, 1.5f, (float) getHeight());
     }
-
-    paintFrame (g);
-}
-
-void WaveformDisplay::paintFrame (juce::Graphics& g)
-{
-    // Drawn last, over the veil and the handles, so the corners stay round
-    // whatever is painted under them.
-    const auto bounds = getLocalBounds().toFloat();
-
-    juce::Path outside;
-    outside.addRectangle (bounds);
-    outside.setUsingNonZeroWinding (false);
-    outside.addRoundedRectangle (bounds, cornerRadius);
-
-    g.setColour (background);
-    g.fillPath (outside);
-
-    g.setColour (outline);
-    g.drawRoundedRectangle (bounds.reduced (0.5f), cornerRadius, 1.0f);
 }
 
 void WaveformDisplay::paintEmpty (juce::Graphics& g)
 {
-    g.setColour (dimText);
-    g.setFont (uiFont (13.0f));
-    // Not "no reference loaded" - the info line directly below already says
-    // that, and the button below that says it a third time. What nothing else on
-    // the panel says is what this strip is for once a file is in it.
+    g.setColour (Palette::displayDim);
+    g.setFont (Palette::mono (10.5f));
+    // Not "no reference loaded" - the line above already says that. What
+    // nothing else on the panel says is what this strip is for once a file is
+    // in it.
     g.drawText (utf8 ("Drag across the waveform to loop a section"),
                 getLocalBounds(), juce::Justification::centred);
 }

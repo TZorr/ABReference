@@ -472,6 +472,161 @@ static void testCrossfade()
 }
 
 //==============================================================================
+static void testMonitor()
+{
+    section ("Monitor: Stereo / Mid / Side");
+
+    constexpr double sampleRate = 48000.0;
+    constexpr int blockSize = 1024;   // longer than the 8 ms ramp, so block 2 is settled
+
+    auto makeEngine = [] (ABEngine& engine)
+    {
+        engine.prepare (sampleRate);
+        engine.reset (false);
+        engine.setTarget (false);
+    };
+
+    auto noise = [] (juce::AudioBuffer<float>& buffer, int seed)
+    {
+        juce::Random random (seed);
+
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+            for (int n = 0; n < buffer.getNumSamples(); ++n)
+                buffer.setSample (ch, n, random.nextFloat() * 2.0f - 1.0f);
+    };
+
+    juce::AudioBuffer<float> silence (2, blockSize);
+    silence.clear();
+
+    // Settled on Mid, both channels carry (L + R) / 2.
+    {
+        ABEngine engine;
+        makeEngine (engine);
+        engine.setMonitorMode (1);
+
+        juce::AudioBuffer<float> main (2, blockSize), original (2, blockSize);
+        noise (main, 11);
+        engine.process (main, silence, blockSize);   // ramp
+
+        noise (main, 12);
+        original.makeCopyOf (main);
+        engine.process (main, silence, blockSize);
+
+        double worst = 0.0;
+
+        for (int n = 0; n < blockSize; ++n)
+        {
+            const double mid = 0.5 * ((double) original.getSample (0, n) + (double) original.getSample (1, n));
+            worst = juce::jmax (worst, std::abs (main.getSample (0, n) - mid), std::abs (main.getSample (1, n) - mid));
+        }
+
+        expectNear (worst, 0.0, 1.0e-6, "Mid: L = R = (L + R) / 2");
+    }
+
+    // Side: a centred signal disappears, an anti-phase one comes through whole.
+    {
+        ABEngine engine;
+        makeEngine (engine);
+        engine.setMonitorMode (2);
+
+        juce::AudioBuffer<float> main (2, blockSize);
+        noise (main, 21);
+        engine.process (main, silence, blockSize);   // ramp
+
+        juce::Random random (22);
+
+        for (int n = 0; n < blockSize; ++n)
+        {
+            const float x = random.nextFloat() * 2.0f - 1.0f;
+            main.setSample (0, n, x);
+            main.setSample (1, n, x);
+        }
+
+        engine.process (main, silence, blockSize);
+        expectNear (main.getMagnitude (0, blockSize), 0.0, 1.0e-7, "Side: a centred signal is silence");
+
+        juce::AudioBuffer<float> original (1, blockSize);
+
+        for (int n = 0; n < blockSize; ++n)
+        {
+            const float x = random.nextFloat() * 2.0f - 1.0f;
+            main.setSample (0, n, x);
+            main.setSample (1, n, -x);
+            original.setSample (0, n, x);
+        }
+
+        engine.process (main, silence, blockSize);
+
+        double worst = 0.0;
+
+        for (int n = 0; n < blockSize; ++n)
+            worst = juce::jmax (worst, (double) std::abs (main.getSample (0, n) - original.getSample (0, n)),
+                                       (double) std::abs (main.getSample (1, n) - original.getSample (0, n)));
+
+        expectNear (worst, 0.0, 1.0e-6, "Side: L = x, R = -x comes back as x on both");
+    }
+
+    // The ramp: Stereo to Mid on L = 1, R = 0 takes the left channel from 1 to
+    // 0.5 in even steps over 8 ms, never in one jump.
+    {
+        ABEngine engine;
+        makeEngine (engine);
+        engine.setMonitorMode (1);
+
+        juce::AudioBuffer<float> main (2, blockSize);
+
+        for (int n = 0; n < blockSize; ++n)
+        {
+            main.setSample (0, n, 1.0f);
+            main.setSample (1, n, 0.0f);
+        }
+
+        engine.process (main, silence, blockSize);
+
+        const double rampSamples = sampleRate * 0.008;
+        const double expectedStep = 0.5 / rampSamples;
+        double largestStep = 1.0 - main.getSample (0, 0);
+
+        for (int n = 1; n < blockSize; ++n)
+            largestStep = juce::jmax (largestStep, (double) std::abs (main.getSample (0, n) - main.getSample (0, n - 1)));
+
+        expectWithin (largestStep, 0.0, expectedStep * 1.01, "Stereo -> Mid ramps, no step larger than one increment");
+        expectNear (main.getSample (0, blockSize - 1), 0.5, 1.0e-6, "and it settles at the mid");
+    }
+
+    // Back on Stereo, the buffer is untouched again - bit for bit, not just close.
+    {
+        ABEngine engine;
+        makeEngine (engine);
+        engine.setMonitorMode (2);
+
+        juce::AudioBuffer<float> main (2, blockSize), original (2, blockSize);
+        noise (main, 31);
+        engine.process (main, silence, blockSize);
+
+        engine.setMonitorMode (0);
+        noise (main, 32);
+        engine.process (main, silence, blockSize);   // ramp back
+
+        noise (main, 33);
+        original.makeCopyOf (main);
+        engine.process (main, silence, blockSize);
+
+        bool identical = true;
+
+        for (int ch = 0; ch < 2 && identical; ++ch)
+            for (int n = 0; n < blockSize; ++n)
+                if (! sameBits (main.getSample (ch, n), original.getSample (ch, n)))
+                {
+                    identical = false;
+                    break;
+                }
+
+        expectTrue (identical, "back on Stereo, A is bit for bit again", "after Side and a ramp back");
+    }
+}
+
+//==============================================================================
 namespace
 {
     /** A clip that says when it dies, so the lifetime protocol can be checked
@@ -1143,6 +1298,11 @@ static void testEndToEndLoad()
             expectTrue (listener.clip->sourceChannels == 1, "and the UI is told it was mono");
             expectNear (listener.clip->integratedLufs, -23.0, 0.1,
                         "mono duplicated reads the same loudness as stereo");
+
+            // Folded back to one channel it is the file as it was: the stereo
+            // figure less the 3.01 dB that two identical channels add.
+            expectNear (listener.clip->integratedLufsMono - listener.clip->integratedLufs, -3.0103, 0.02,
+                        "its mono fold reads 3.01 dB below the stereo figure");
         }
     }
 
@@ -1377,6 +1537,7 @@ int main (int, char**)
     testWindowLengths();
     testTruePeak();
     testCrossfade();
+    testMonitor();
     testReferencePlayer();
     testReferenceBus();
     testLoopRegion();

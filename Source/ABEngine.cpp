@@ -5,12 +5,21 @@
 
 #include "ABEngine.h"
 
+ABEngine::ABEngine()
+{
+    // Stereo: the identity. A default-constructed ramp sits at zero, which as
+    // a matrix is silence.
+    monitorMatrix[0].setCurrentAndTargetValue (1.0f);
+    monitorMatrix[3].setCurrentAndTargetValue (1.0f);
+}
+
 void ABEngine::prepare (double sampleRate)
 {
     const double fadeSamples = juce::jmax (1.0, sampleRate * crossfadeSeconds);
     increment = (float) (1.0 / fadeSamples);
 
-    monoSum.reset (sampleRate, crossfadeSeconds);
+    for (auto& coefficient : monitorMatrix)
+        coefficient.reset (sampleRate, crossfadeSeconds);
 
     reset (target > 0.5f);
 }
@@ -19,7 +28,42 @@ void ABEngine::reset (bool startOnB) noexcept
 {
     position = startOnB ? 1.0f : 0.0f;
     target   = position;
-    monoSum.setCurrentAndTargetValue (monoSum.getTargetValue());
+
+    for (auto& coefficient : monitorMatrix)
+        coefficient.setCurrentAndTargetValue (coefficient.getTargetValue());
+}
+
+void ABEngine::setMonitorMode (int mode) noexcept
+{
+    mode = juce::jlimit (0, 2, mode);
+
+    if (mode == monitorMode)
+        return;
+
+    monitorMode = mode;
+
+    // ll, lr, rl, rr. Mid and Side both land on both speakers: L' = R'.
+    static constexpr float matrices[3][4]
+    {
+        { 1.0f, 0.0f, 0.0f, 1.0f },     // Stereo
+        { 0.5f, 0.5f, 0.5f, 0.5f },     // Mid  = (L + R) / 2
+        { 0.5f, -0.5f, 0.5f, -0.5f }    // Side = (L - R) / 2
+    };
+
+    for (size_t i = 0; i < monitorMatrix.size(); ++i)
+        monitorMatrix[i].setTargetValue (matrices[mode][i]);
+}
+
+bool ABEngine::monitorIsStereo() const noexcept
+{
+    if (monitorMode != 0)
+        return false;
+
+    for (const auto& coefficient : monitorMatrix)
+        if (coefficient.isSmoothing())
+            return false;
+
+    return true;
 }
 
 void ABEngine::process (juce::AudioBuffer<float>& main,
@@ -45,10 +89,10 @@ void ABEngine::process (juce::AudioBuffer<float>& main,
     if (settled && position <= 0.0f)
     {
         // Fully on A. The buffer is not read, not written, not multiplied by
-        // 1.0 - it is left exactly as the host handed it over. Only mono sum,
-        // which is a monitoring choice rather than part of the comparison, can
-        // still touch it.
-        applyMonoSum (main, numSamples);
+        // 1.0 - it is left exactly as the host handed it over. Only the
+        // monitor, which is a listening choice rather than part of the
+        // comparison, can still touch it.
+        applyMonitor (main, numSamples);
         return;
     }
 
@@ -69,7 +113,7 @@ void ABEngine::process (juce::AudioBuffer<float>& main,
             for (int ch = 0; ch < channels; ++ch)
                 out[ch][n] = in[ch][n];
 
-        applyMonoSum (main, numSamples);
+        applyMonitor (main, numSamples);
         return;
     }
 
@@ -104,26 +148,27 @@ void ABEngine::process (juce::AudioBuffer<float>& main,
 
     position = localPosition;
 
-    applyMonoSum (main, numSamples);
+    applyMonitor (main, numSamples);
 }
 
-void ABEngine::applyMonoSum (juce::AudioBuffer<float>& buffer, int numSamples) noexcept
+void ABEngine::applyMonitor (juce::AudioBuffer<float>& buffer, int numSamples) noexcept
 {
     if (buffer.getNumChannels() < 2)
         return;
 
-    if (! monoSum.isSmoothing() && monoSum.getCurrentValue() <= 0.0f)
+    if (monitorIsStereo())
         return;   // the common case: stereo, buffer untouched
 
     auto* left  = buffer.getWritePointer (0);
     auto* right = buffer.getWritePointer (1);
 
+    auto& [ll, lr, rl, rr] = monitorMatrix;
+
     for (int n = 0; n < numSamples; ++n)
     {
-        const float amount = monoSum.getNextValue();
-        const float mid = (left[n] + right[n]) * 0.5f;
+        const float l = left[n], r = right[n];
 
-        left[n]  += (mid - left[n])  * amount;
-        right[n] += (mid - right[n]) * amount;
+        left[n]  = ll.getNextValue() * l + lr.getNextValue() * r;
+        right[n] = rl.getNextValue() * l + rr.getNextValue() * r;
     }
 }
