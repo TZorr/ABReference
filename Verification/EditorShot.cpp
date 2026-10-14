@@ -542,41 +542,68 @@ int main (int argc, char** argv)
 
     // Let the editor's own refresh timer fire at least once, so what is painted
     // is the state the panel actually settles into rather than its constructor
-    // defaults.
-    const auto deadline = juce::Time::getMillisecondCounter() + 400;
-
-    while (juce::Time::getMillisecondCounter() < deadline)
-        juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
-
-    juce::Image image (juce::Image::ARGB, editor->getWidth(), editor->getHeight(), true);
-
+    // defaults. Also how a theme switch reaches the panel here: the editor's
+    // timer notices Palette::dark changed, as it does for a second window.
+    const auto settle = []
     {
-        juce::Graphics g (image);
-        editor->paintEntireComponent (g, true);
-    }
+        const auto deadline = juce::Time::getMillisecondCounter() + 400;
 
-    juce::PNGImageFormat format;
+        while (juce::Time::getMillisecondCounter() < deadline)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+    };
 
-    // Deleted first, because createOutputStream opens an existing file at its
-    // end. Without this every render after the first is appended to the last
-    // one, and since a decoder stops at the first image in the file, the picture
-    // you look at is the one from the build before the change you are checking.
-    // This target exists to make the panel checkable; a stale image that still
-    // looks plausible defeats the entire point of it.
-    output.deleteFile();
-
-    std::unique_ptr<juce::FileOutputStream> stream (output.createOutputStream());
-
-    if (stream == nullptr || ! format.writeImageToStream (image, *stream))
+    const auto render = [&editor] (const juce::File& file)
     {
-        std::printf ("FAIL: could not write %s\n", output.getFullPathName().toRawUTF8());
+        juce::Image image (juce::Image::ARGB, editor->getWidth(), editor->getHeight(), true);
+
+        {
+            juce::Graphics g (image);
+            editor->paintEntireComponent (g, true);
+        }
+
+        juce::PNGImageFormat format;
+
+        // Deleted first, because createOutputStream opens an existing file at its
+        // end. Without this every render after the first is appended to the last
+        // one, and since a decoder stops at the first image in the file, the picture
+        // you look at is the one from the build before the change you are checking.
+        // This target exists to make the panel checkable; a stale image that still
+        // looks plausible defeats the entire point of it.
+        file.deleteFile();
+
+        std::unique_ptr<juce::FileOutputStream> stream (file.createOutputStream());
+
+        if (stream == nullptr || ! format.writeImageToStream (image, *stream))
+        {
+            std::printf ("FAIL: could not write %s\n", file.getFullPathName().toRawUTF8());
+            return false;
+        }
+
+        std::printf ("Editor %d x %d rendered to %s\n",
+                     image.getWidth(), image.getHeight(), file.getFullPathName().toRawUTF8());
+        return true;
+    };
+
+    // The light panel, then the dark one beside it. Palette::setDark, not the
+    // button, so the user's saved choice is neither read nor written here.
+    Palette::setDark (false);
+    settle();
+
+    if (! render (output))
         return 1;
-    }
+
+    Palette::setDark (true);
+    settle();
+
+    const auto darkOutput = output.getSiblingFile (output.getFileNameWithoutExtension() + "-dark"
+                                                   + output.getFileExtension());
+    const bool darkWritten = render (darkOutput);
+    Palette::setDark (false);
+
+    if (! darkWritten)
+        return 1;
 
     processor.editorBeingDeleted (editor.get());
     editor.reset();
-
-    std::printf ("Editor %d x %d rendered to %s\n",
-                 image.getWidth(), image.getHeight(), output.getFullPathName().toRawUTF8());
     return 0;
 }

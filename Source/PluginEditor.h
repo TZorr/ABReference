@@ -69,6 +69,9 @@ private:
     void refreshSlots();
     void setAB (bool wantB);
 
+    /** Light or dark panel, saved for the user (not the session). */
+    void setDarkMode (bool shouldBeDark);
+
     /** One parameter write, done the way a host expects to see it: a gesture
         around a normalised value. Both halves of that are easy to get wrong -
         writing raw seconds into setValueNotifyingHost is silent and wrong - so
@@ -105,6 +108,8 @@ private:
     std::array<std::unique_ptr<ReferenceSlotButton>, ABParams::numSlots> slotButtons;
     FlatToggle loadButton { "+ Load" };
     FlatToggle resetButton { "Reset" };
+    FlatToggle darkButton { "Dark" };
+    bool shownDark = false;
 
     FlatToggle levelMatchButton { "Level Match" };
     FlatToggle loopButton { "Loop" };

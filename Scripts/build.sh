@@ -25,7 +25,7 @@ echo "The processor on mono and stereo buses, and old sessions:"
 "$BUILD_DIR/EditorShot_artefacts/Release/EditorShot" --layouts
 
 echo
-echo "Rendering the panel so the layout can be checked without a DAW:"
+echo "Rendering the panel, light and dark, so the layout can be checked without a DAW:"
 "$BUILD_DIR/EditorShot_artefacts/Release/EditorShot" "$BUILD_DIR/editor.png"
 
 # The second shot is the state the plugin is actually used in - a reference

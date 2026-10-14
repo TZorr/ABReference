@@ -57,6 +57,14 @@ public:
         strength then, because it is a picture of B. */
     void setActive (bool isActive);
 
+    /** The panel switched between light and dark. The waveform is drawn once
+        into a cached picture in the palette's colours, so that is redrawn. */
+    void paletteChanged()
+    {
+        cacheValid = false;
+        repaint();
+    }
+
     //==============================================================================
     // Reported to the editor, which owns the parameters.
 

@@ -8,6 +8,22 @@
 
 namespace
 {
+    /** The panel's theme is the user's, not the session's: it lives in
+        ~/Library/Application Support/AB Reference/AB Reference.settings,
+        shared by every instance and every project, as on Kitbox. */
+    std::unique_ptr<juce::PropertiesFile> openSettings()
+    {
+        juce::PropertiesFile::Options options;
+        options.applicationName     = JucePlugin_Name;
+        options.filenameSuffix      = ".settings";
+        options.folderName          = JucePlugin_Name;
+        options.osxLibrarySubFolder = "Application Support";
+        options.getDefaultFile().getParentDirectory().createDirectory();
+        return std::make_unique<juce::PropertiesFile> (options);
+    }
+
+    constexpr const char* darkModeKey = "darkMode";
+
     // The panel's fixed layout, in the same numbers as the approved HTML demo
     // (Design Demo/ab-reference.html), so the two can be held side by side.
     constexpr int panelWidth  = 780;
@@ -19,6 +35,16 @@ namespace
 ABReferenceEditor::ABReferenceEditor (ABReferenceProcessor& p)
     : AudioProcessorEditor (&p), plugin (p)
 {
+    // The saved theme first, so the first paint is already the right one.
+    Palette::setDark (openSettings()->getBoolValue (darkModeKey, false));
+    shownDark = Palette::dark;
+
+    darkButton.setClickingTogglesState (false);
+    darkButton.setToggleState (Palette::dark, juce::dontSendNotification);
+    darkButton.setTooltip ("Dark panel on / off");
+    darkButton.onClick = [this] { setDarkMode (! Palette::dark); };
+    addAndMakeVisible (darkButton);
+
     addAndMakeVisible (aPad);
     addAndMakeVisible (bPad);
 
@@ -321,12 +347,32 @@ void ABReferenceEditor::filesDropped (const juce::StringArray& files, int, int)
     selectSlot (slot);
 }
 
+void ABReferenceEditor::setDarkMode (bool shouldBeDark)
+{
+    Palette::setDark (shouldBeDark);
+
+    if (auto settings = openSettings())
+    {
+        settings->setValue (darkModeKey, shouldBeDark);
+        settings->saveIfNeeded();
+    }
+
+    shownDark = shouldBeDark;
+    darkButton.setToggleState (shouldBeDark, juce::dontSendNotification);
+    waveform.paletteChanged();
+    repaint();
+}
+
 //==============================================================================
 void ABReferenceEditor::resized()
 {
     // Top: the wordmark over the two pads on the left, the slot row over the
     // display on the right.
     wordmarkArea = { margin, 22, 240, 60 };
+
+    // Right-aligned on the subtitle's line, which ends well before it; the
+    // pads below leave no room for Kitbox's place under the wordmark.
+    darkButton.setBounds (wordmarkArea.getRight() - 52, wordmarkArea.getY() + 36, 52, 17);
 
     aPad.setBounds (margin, 92, 117, 124);
     bPad.setBounds (margin + 123, 92, 117, 124);
@@ -733,6 +779,15 @@ void ABReferenceEditor::refreshSwitchCaptions()
 //==============================================================================
 void ABReferenceEditor::timerCallback()
 {
+    // Another AB Reference window may have switched the theme: it is process-wide.
+    if (shownDark != Palette::dark)
+    {
+        shownDark = Palette::dark;
+        darkButton.setToggleState (shownDark, juce::dontSendNotification);
+        waveform.paletteChanged();
+        repaint();
+    }
+
     const bool onB = plugin.apvts.getRawParameterValue (ABParams::ab)->load() > 0.5f;
 
     aPad.setLit (! onB);

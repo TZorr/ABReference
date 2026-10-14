@@ -4,6 +4,12 @@ A mastering A/B plugin for macOS: Audio Unit, VST3 and Standalone.
 
 <img src="screenshot.png" width="600" alt="AB Reference">
 
+<img src="screenshot-dark.png" width="600" alt="AB Reference in Logic Pro with the dark panel">
+
+**Dark**, beside the wordmark, switches the panel to dark; the choice is yours,
+not the session's - every AB Reference window and project opens the way you
+left it.
+
 No network code, no telemetry, no account. `JUCE_USE_CURL=0` and
 `JUCE_WEB_BROWSER=0` are set at the build level, not just left unused.
 
