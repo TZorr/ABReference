@@ -4,7 +4,7 @@ A mastering A/B plugin for macOS: Audio Unit, VST3 and Standalone.
 
 <img src="screenshot.png" width="600" alt="AB Reference">
 
-<img src="screenshot-dark.png" width="600" alt="AB Reference in Logic Pro with the dark panel">
+<img src="screenshot-dark.png" width="600" alt="AB Reference in Logic Pro with the dark panel and the Balance view">
 
 **Dark**, beside the wordmark, switches the panel to dark; the choice is yours,
 not the session's - every AB Reference window and project opens the way you
@@ -88,6 +88,7 @@ plugins, a Developer ID Installer certificate for the package, and notarisation.
 | **Monitor** | **Stereo** / **Mid** / **Side**, for whatever you are hearing, A or B. Mid is the mono sum (L + R) / 2, where bass and phase problems show up and nowhere else; Side is the difference (L − R) / 2, where reverb, width and stereo tricks sit on their own. Both play on both speakers. Switching ramps over 8 ms. The meters keep measuring the untouched signals. Before 0.4 this was an on/off Mono button; a session saved with Mono on opens with Mid. |
 | **Loop** | Repeat the reference instead of falling silent at its end. |
 | **Waveform** | The reference, drawn: RMS as the solid body, peaks as the faint outline, scaled to the reference's own loudest stretch so quiet and loud sections of a finished master are told apart. Dimmed while you listen to A. Drag across it to loop a section; drag either edge to move it; click once to go back to the whole file. Selecting a section switches Loop on. |
+| **Display** | **Wave** or **Balance**, in the display's top line. Kept with the session. Since 0.5 the display runs the full width of the panel; the pads, meters and match controls sit in one row under it. |
 | **Reset** | Clears integrated LUFS and the held true peak on both sides. |
 
 The reference follows the timeline: reference sample 0 sits at timeline position 0,
@@ -102,6 +103,39 @@ plays: it starts when the transport does and repeats, wherever the host happens 
 be. That is deliberate — looping a reference chorus against your own mix is the
 point of the control — but it does mean B is no longer sample-aligned with A while
 a region is set. Clear the region and the alignment comes back.
+
+### Balance
+
+**Balance** replaces the waveform with a comparison of the spectral balance of A
+and the selected reference, at the same loudness — the question a reference is
+there to answer: *where is my mix different from this record?*
+
+- **Bands on the ear's scale.** The spectrum is summed (power, not dB) into 40
+  bands spaced evenly on the ERB scale from 30 Hz to 16 kHz — narrow in hertz at
+  the bottom, wide at the top, the way the ear resolves frequency. The frequency
+  axis is drawn on the same scale, so every band gets the same width.
+- **At equal loudness.** Each band is a share of the K-weighted power, the ear
+  weighting LUFS uses (up to 20 kHz). The same master 10 dB quieter draws the
+  same line, and "equal" means what it means to the level match.
+- **The reference as a corridor.** When a reference loads, it is cut into 3 s
+  windows (gated like integrated loudness, so silence and fades are left out).
+  The orange band is the 10th to 90th percentile of those windows around their
+  median, which is the zero line. It is usually narrow in the mids and wide at
+  both ends — the tub shape — because masters, and sections of one master, agree
+  closely where the ear is most sensitive and much less in the sub bass and the
+  air.
+- **A, live,** in green, averaged over the same 3 s. Where it leaves the corridor
+  the gap is filled red. When A goes silent the last reading is held and dimmed.
+- **Cursor.** Hover over the graph for a readout at that frequency: A against
+  the reference's median, and the reference's own 10–90 % range there, read from
+  the curves as drawn.
+- **Drawn smooth.** For the eye only, the curves are smoothed over about two bands
+  either side and drawn as splines through the band centres; the measurement
+  itself is not smoothed.
+
+It shows balance, not loudness and not stereo: both channels' power is summed,
+and Monitor and the loop region do not change it — the corridor is always the
+whole file.
 
 ## What is in it, and why
 
@@ -153,7 +187,7 @@ with.
 
 ## Verification
 
-`MeterCheck` (which `Scripts/build.sh` runs) checks 130 things against sources
+`MeterCheck` (which `Scripts/build.sh` runs) checks 147 things against sources
 outside this project — BS.1770-4, EBU Tech 3341, and arithmetic on the definitions.
 It has already found two real bugs:
 
@@ -173,6 +207,15 @@ region out with simulated mouse events**, and checks that the parameters moved a
 that Loop switched itself on. Setting those parameters directly would have produced
 the same picture and proved nothing; the gesture is the half of the feature worth
 testing, and driving it this way caught a real ordering bug the first time it ran.
+
+For Balance, `MeterCheck` holds the bands to first principles: a full-scale 1 kHz
+sine reads −3.01 LUFS from one frame and all of its power lands in the bands, a
+sine at a band's centre lands in that band, the same noise reads the same balance
+20 dB quieter and at 96 kHz, silence after the music adds nothing to the corridor,
+and the live 3 s average agrees with the corridor measured on the same material.
+`EditorShot --demo` also renders `editor-loaded-balance.png`: a synthetic
+reference whose low and high ends move between sections, against an A with more
+bass and less air, fed through the real `processBlock`.
 
 `EditorShot --layouts` runs the real processor on all three buses it accepts. On A
 it checks the output bit for bit on mono/mono and that a mono input reaches both

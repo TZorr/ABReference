@@ -252,6 +252,7 @@ void ReferenceLoader::run()
 
             measure (*clip);
             summarise (*clip);
+            clip->balance = BalanceAnalyser::measureCorridor (clip->audio, clip->playbackSampleRate);
 
             outcome.clip = clip;
             lastClips[(size_t) slot] = clip;

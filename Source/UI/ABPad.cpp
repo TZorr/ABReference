@@ -67,9 +67,13 @@ void ABPad::paint (juce::Graphics& g)
     g.setFont (Palette::mono (10.0f));
     g.drawText (corner, area.withHeight (12.0f), juce::Justification::topRight);
 
+    // 40 points on a pad of the old height, smaller on the compact one, so the
+    // letter never runs into the caption under it.
+    const float letterSize = juce::jmin (40.0f, bounds.getHeight() * 0.32f);
+
     g.setColour (ink);
-    g.setFont (juce::Font (juce::FontOptions (40.0f, juce::Font::bold)));
-    g.drawText (letter, area.withTrimmedTop (8.0f).withHeight (40.0f), juce::Justification::topLeft);
+    g.setFont (juce::Font (juce::FontOptions (letterSize, juce::Font::bold)));
+    g.drawText (letter, area.withTrimmedTop (8.0f).withHeight (letterSize), juce::Justification::topLeft);
 
     auto nameRow = area.removeFromBottom (13.0f);
     area.removeFromBottom (7.0f);
@@ -80,7 +84,7 @@ void ABPad::paint (juce::Graphics& g)
 
     g.setColour (ink);
     g.setFont (Palette::label (11.0f).withExtraKerningFactor (0.04f));
-    g.drawText (name, nameRow, juce::Justification::centredLeft, true);
+    g.drawFittedText (name, nameRow.toNearestInt(), juce::Justification::centredLeft, 1, 0.85f);
 }
 
 void ABPad::mouseDown (const juce::MouseEvent&)

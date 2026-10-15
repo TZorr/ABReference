@@ -26,6 +26,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include "BalanceAnalyser.h"
 #include "LoudnessMeter.h"
 
 class ReferenceClip : public juce::ReferenceCountedObject
@@ -80,6 +81,11 @@ public:
     std::array<float, numWaveformBuckets> waveMin {};
     std::array<float, numWaveformBuckets> waveMax {};
     std::array<float, numWaveformBuckets> waveRms {};
+
+    /** The reference's spectral balance: the 10-90 % corridor of its 3 s
+        windows on the ERB scale, at equal loudness. What A is compared with
+        in the Balance view; measured on the loader thread with the rest. */
+    Balance::Corridor balance;
 
     int    getNumSamples()  const noexcept { return audio.getNumSamples(); }
     double getLengthSeconds() const noexcept

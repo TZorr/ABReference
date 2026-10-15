@@ -37,6 +37,7 @@
 
 #include "PluginProcessor.h"
 #include "ReferenceSlotButton.h"
+#include "BalanceDisplay.h"
 #include "WaveformDisplay.h"
 #include "UI/ABPad.h"
 #include "UI/ChoiceButtons.h"
@@ -71,6 +72,11 @@ private:
 
     /** Light or dark panel, saved for the user (not the session). */
     void setDarkMode (bool shouldBeDark);
+
+    /** Waveform or balance in the display; kept in the session's state. */
+    void setDisplayView (int view);
+    int getDisplayView() const;
+    void refreshBalance();
 
     /** One parameter write, done the way a host expects to see it: a gesture
         around a normalised value. Both halves of that are easy to get wrong -
@@ -114,6 +120,8 @@ private:
     FlatToggle levelMatchButton { "Level Match" };
     FlatToggle loopButton { "Loop" };
     ChoiceButtons monitorButtons;
+    ChoiceButtons viewButtons;
+    int shownView = -1;
 
     Knob trimKnob { "Trim", true };
     Knob offsetKnob { "Offset", true };
@@ -123,12 +131,13 @@ private:
     std::unique_ptr<ButtonAttachment> levelMatchAttachment, loopAttachment;
 
     WaveformDisplay waveform;
+    BalanceDisplay balance;
 
     std::unique_ptr<juce::FileChooser> fileChooser;
 
     // Painted areas, set in resized().
     juce::Rectangle<int> wordmarkArea, displayArea, loudnessArea, matchArea,
-                         meterTableArea, matchReadoutArea, monitorLabelArea, footerArea;
+                         meterTableArea, matchReadoutArea, footerArea;
 
     // What the display and the footer say, cached by the timer so paint does
     // not rebuild strings, and so a repaint happens only when one changed.

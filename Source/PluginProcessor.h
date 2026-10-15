@@ -31,6 +31,7 @@
 #include <array>
 
 #include "ABEngine.h"
+#include "BalanceAnalyser.h"
 #include "LoudnessMeter.h"
 #include "ParameterIds.h"
 #include "ReferenceBus.h"
@@ -160,6 +161,20 @@ public:
         together or the pair stops making sense. */
     void resetMeters();
 
+    /** Message thread: takes what the audio thread has handed over of A since
+        the last call and advances A's 3 s balance. The editor calls this on
+        every frame; with no editor open nothing reads the hand-over and the
+        audio thread simply finds it full. */
+    void updateBalance();
+
+    /** A's balance, dB per band at equal loudness - comparable with the
+        selected clip's balance corridor. False until A has had signal. */
+    bool getABalance (Balance::Bands& balanceDb) const { return balanceA.getAverage (balanceDb); }
+
+    /** How long A has been below the gate, so the panel can grey out a curve
+        that is only being held. */
+    double getASecondsSinceSignal() const { return balanceA.getSecondsSinceSignal(); }
+
     /** True on a mono output bus. The reference is then heard folded to mono,
         and matched and metered that way. */
     bool isMonoOutput() const { return getTotalNumOutputChannels() == 1; }
@@ -183,6 +198,22 @@ private:
 
     LoudnessMeter meterA, meterB;
     TruePeakMeter peakA;
+
+    // A's audio on its way to the balance analysis: written by the audio
+    // thread, read by the message thread. Allocated once, here, so neither
+    // prepareToPlay nor anything else ever resizes it under a reader. Two
+    // channels always; a mono input is written to both.
+    static constexpr int balanceFifoSize = 1 << 16;
+    juce::AbstractFifo balanceFifo { balanceFifoSize };
+    juce::AudioBuffer<float> balanceFifoAudio { 2, balanceFifoSize };
+    std::atomic<double> balanceRate { 0.0 };
+
+    void pushBalanceAudio (const juce::AudioBuffer<float>& buffer, int numSamples) noexcept;
+
+    // Message thread only.
+    BalanceAnalyser balanceA;
+    juce::AudioBuffer<float> balanceFrame;
+    int balanceFill = 0;
 
     juce::AudioBuffer<float> referenceScratch;
 

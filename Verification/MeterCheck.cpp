@@ -31,6 +31,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
 
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstdio>
@@ -38,6 +39,7 @@
 #include <string>
 
 #include "ABEngine.h"
+#include "BalanceAnalyser.h"
 #include "LoudnessMeter.h"
 #include "ReferenceLoader.h"
 #include "ReferenceBus.h"
@@ -1524,6 +1526,194 @@ static void testReferenceBus()
 }
 
 //==============================================================================
+
+//==============================================================================
+namespace
+{
+    /** Stereo pink noise, independent per channel, from a fixed seed. Paul
+        Kellet's three-pole economy filter: within a dB of -3 dB/octave from
+        about 10 Hz up, which is all a balance test needs. */
+    juce::AudioBuffer<float> makePinkNoise (double sampleRate, double seconds, float gain, int seed = 1)
+    {
+        juce::AudioBuffer<float> buffer (2, (int) (sampleRate * seconds));
+        juce::Random random (seed);
+
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            double b0 = 0.0, b1 = 0.0, b2 = 0.0;
+            auto* out = buffer.getWritePointer (ch);
+
+            for (int n = 0; n < buffer.getNumSamples(); ++n)
+            {
+                const double white = random.nextDouble() * 2.0 - 1.0;
+                b0 = 0.99765 * b0 + white * 0.0990460;
+                b1 = 0.96300 * b1 + white * 0.2965164;
+                b2 = 0.57000 * b2 + white * 1.0526913;
+                out[n] = (float) ((b0 + b1 + b2 + white * 0.1848) * 0.05 * gain);
+            }
+        }
+
+        return buffer;
+    }
+
+    float largestDifference (const Balance::Bands& x, const Balance::Bands& y)
+    {
+        float worst = 0.0f;
+
+        for (size_t b = 0; b < x.size(); ++b)
+            worst = juce::jmax (worst, std::abs (x[b] - y[b]));
+
+        return worst;
+    }
+}
+
+static void testBalance()
+{
+    section ("Balance: ERB bands and the reference corridor");
+
+    constexpr double rate = 48000.0;
+
+    BalanceAnalyser analyser;
+    analyser.prepare (rate);
+
+    juce::AudioBuffer<float> frame (1, analyser.getFrameSize());
+
+    // A full-scale 1 kHz sine on one channel is -3.01 LUFS by definition; the
+    // frame's K-weighted power has to say the same, or "equal loudness" here
+    // means something different from the level match.
+    {
+        fillSine (frame, rate, 1000.0, 1.0);
+
+        Balance::Bands bands;
+        const auto power = analyser.analyseFrame (frame.getArrayOfReadPointers(), 1, bands);
+
+        expectNear (BalanceAnalyser::frameLufs (power), -3.0103, 0.05,
+                    "a 0 dBFS 1 kHz sine reads -3.01 LUFS in one frame");
+
+        double total = 0.0;
+
+        for (const auto band : bands)
+            total += band;
+
+        expectNear (total, 0.5, 0.0025, "all of its power lands in the bands, once");
+    }
+
+    // A sine at a band's centre belongs to that band.
+    for (const int band : { 2, 20, 37 })
+    {
+        fillSine (frame, rate, Balance::bandCentreHz (band), 0.5);
+
+        Balance::Bands bands;
+        analyser.analyseFrame (frame.getArrayOfReadPointers(), 1, bands);
+
+        const auto loudest = (int) (std::max_element (bands.begin(), bands.end()) - bands.begin());
+        double total = 0.0;
+
+        for (const auto b : bands)
+            total += b;
+
+        char what[96];
+        std::snprintf (what, sizeof (what), "a sine at %.0f Hz lands in band %d", Balance::bandCentreHz (band), band);
+        expectTrue (loudest == band && bands[(size_t) band] / total > 0.8, what,
+                    "loudest band " + std::to_string (loudest) + ", share "
+                        + std::to_string (bands[(size_t) band] / total));
+    }
+
+    // The corridor of stationary noise: valid, narrow, and the same at any level.
+    const auto pink = makePinkNoise (rate, 20.0, 1.0f);
+    const auto corridor = BalanceAnalyser::measureCorridor (pink, rate);
+
+    expectWithin (corridor.windows, 16, 20, "20 s of noise gives a window per second");
+
+    {
+        float widest = 0.0f;
+
+        for (int b = 10; b < 35; ++b)
+            widest = juce::jmax (widest, corridor.high[(size_t) b] - corridor.low[(size_t) b]);
+
+        expectWithin (widest, 0.0, 1.0, "steady noise: 10-90 % under 1 dB in the mids");
+    }
+
+    {
+        auto quiet = pink;
+        quiet.applyGain (0.1f);
+        const auto quieter = BalanceAnalyser::measureCorridor (quiet, rate);
+
+        expectWithin (largestDifference (corridor.median, quieter.median), 0.0, 0.05,
+                      "20 dB quieter, the same balance");
+    }
+
+    // Silence after the music is gated out, not averaged in.
+    {
+        juce::AudioBuffer<float> withTail (2, pink.getNumSamples() * 2);
+        withTail.clear();
+
+        for (int ch = 0; ch < 2; ++ch)
+            withTail.copyFrom (ch, 0, pink, ch, 0, pink.getNumSamples());
+
+        const auto tailed = BalanceAnalyser::measureCorridor (withTail, rate);
+
+        expectWithin (tailed.windows, corridor.windows - 1, corridor.windows + 2,
+                      "20 s of silence after it add no windows");
+        expectWithin (largestDifference (corridor.median, tailed.median), 0.0, 0.2,
+                      "and do not move the median");
+    }
+
+    {
+        juce::AudioBuffer<float> silence (2, (int) (rate * 5.0));
+        silence.clear();
+
+        expectTrue (! BalanceAnalyser::measureCorridor (silence, rate).isValid(),
+                    "a silent reference has no corridor");
+    }
+
+    // The same material at 96 kHz, where the FFT is twice as long.
+    {
+        const auto pink96 = ReferenceLoader::resample (pink, rate, 96000.0);
+        const auto at96 = BalanceAnalyser::measureCorridor (pink96, 96000.0);
+
+        expectWithin (largestDifference (corridor.median, at96.median), 0.0, 0.75,
+                      "96 kHz reads the same balance as 48 kHz");
+    }
+
+    // The live path - frame by frame, averaged - agrees with the corridor
+    // measured on the same material, which is what makes comparing them fair.
+    {
+        BalanceAnalyser live;
+        live.prepare (rate);
+
+        const int size = live.getFrameSize();
+        const int hop  = live.getHopSize();
+
+        Balance::Bands bands, average {};
+
+        expectTrue (! live.getAverage (average), "no reading before any signal");
+
+        for (int start = 0; start + size <= pink.getNumSamples(); start += hop)
+        {
+            const float* pointers[] { pink.getReadPointer (0, start), pink.getReadPointer (1, start) };
+            live.addToAverage (bands, live.analyseFrame (pointers, 2, bands));
+        }
+
+        expectTrue (live.getAverage (average), "a reading once there has been signal");
+        expectWithin (largestDifference (average, corridor.median), 0.0, 1.5,
+                      "live 3 s average matches the corridor's median");
+
+        // Then silence: the reading is held, and says how long it has been.
+        juce::AudioBuffer<float> silence (2, size);
+        silence.clear();
+
+        for (int i = 0; i < 50; ++i)
+            live.addToAverage (bands, live.analyseFrame (silence.getArrayOfReadPointers(), 2, bands));
+
+        Balance::Bands held {};
+        live.getAverage (held);
+
+        expectWithin (largestDifference (held, average), 0.0, 0.0001, "silence holds the last reading");
+        expectWithin (live.getSecondsSinceSignal(), 4.0, 4.5, "and counts how long it has held it");
+    }
+}
+
 int main (int, char**)
 {
     const juce::ScopedJuceInitialiser_GUI juceInitialiser;
@@ -1543,6 +1733,7 @@ int main (int, char**)
     testLoopRegion();
     testResampler();
     testEndToEndLoad();
+    testBalance();
 
     std::printf ("\n%d checks, \033[%sm%d failed\033[0m\n\n",
                  checks, failures == 0 ? "32" : "31", failures);

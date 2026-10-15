@@ -6,6 +6,8 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+#include <cstring>
+
 //==============================================================================
 juce::AudioProcessorValueTreeState::ParameterLayout ABReferenceProcessor::createParameterLayout()
 {
@@ -126,6 +128,8 @@ void ABReferenceProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
     bus.prepare (sampleRate, currentBlockSize);
     bus.reset ((int) *slotParam);
 
+    balanceRate.store (sampleRate, std::memory_order_relaxed);
+
     meterA.prepare (sampleRate, 2);
     meterB.prepare (sampleRate, 2);
     peakA.prepare (2, currentBlockSize);
@@ -213,6 +217,7 @@ void ABReferenceProcessor::process (juce::AudioBuffer<float>& buffer, bool bypas
     // you cannot use to decide whether to un-bypass it.
     meterA.processBlock (buffer.getArrayOfReadPointers(), buffer.getNumChannels(), numSamples);
     peakA.processBlock  (buffer.getArrayOfReadPointers(), buffer.getNumChannels(), numSamples);
+    pushBalanceAudio (buffer, numSamples);
 
     // A block larger than prepareToPlay promised should not be possible, and
     // every host tested honours that. But "should not be possible" is not a
@@ -408,6 +413,85 @@ void ABReferenceProcessor::process (juce::AudioBuffer<float>& buffer, bool bypas
     }
 
     abPosition.store (engine.getPosition(), std::memory_order_relaxed);
+}
+
+//==============================================================================
+void ABReferenceProcessor::pushBalanceAudio (const juce::AudioBuffer<float>& buffer, int numSamples) noexcept
+{
+    // Whatever fits. With no editor reading, the FIFO fills and A's balance
+    // simply is not being followed, which costs nothing and nobody is looking.
+    const int count = juce::jmin (numSamples, balanceFifo.getFreeSpace());
+
+    if (count <= 0)
+        return;
+
+    const auto scope = balanceFifo.write (count);
+    const int channels = buffer.getNumChannels();
+
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        const int source = juce::jmin (ch, channels - 1);
+
+        if (scope.blockSize1 > 0)
+            balanceFifoAudio.copyFrom (ch, scope.startIndex1, buffer, source, 0, scope.blockSize1);
+
+        if (scope.blockSize2 > 0)
+            balanceFifoAudio.copyFrom (ch, scope.startIndex2, buffer, source, scope.blockSize1, scope.blockSize2);
+    }
+}
+
+void ABReferenceProcessor::updateBalance()
+{
+    const auto rate = balanceRate.load (std::memory_order_relaxed);
+
+    if (rate <= 0.0)
+        return;
+
+    if (std::abs (balanceA.getSampleRate() - rate) > 0.5)
+    {
+        balanceA.prepare (rate);
+        balanceFrame.setSize (2, balanceA.getFrameSize());
+        balanceFrame.clear();
+        balanceFill = 0;
+    }
+
+    const int frameSize = balanceA.getFrameSize();
+    const int hop = balanceA.getHopSize();
+
+    // Into the frame, a frame's worth at a time; every full frame is analysed
+    // and slides on by half its length.
+    for (int ready = balanceFifo.getNumReady(); ready > 0;)
+    {
+        const int take = juce::jmin (ready, frameSize - balanceFill);
+        const auto scope = balanceFifo.read (take);
+
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            if (scope.blockSize1 > 0)
+                balanceFrame.copyFrom (ch, balanceFill, balanceFifoAudio, ch, scope.startIndex1, scope.blockSize1);
+
+            if (scope.blockSize2 > 0)
+                balanceFrame.copyFrom (ch, balanceFill + scope.blockSize1, balanceFifoAudio, ch, scope.startIndex2, scope.blockSize2);
+        }
+
+        balanceFill += take;
+        ready -= take;
+
+        if (balanceFill < frameSize)
+            break;
+
+        Balance::Bands bands;
+        const auto power = balanceA.analyseFrame (balanceFrame.getArrayOfReadPointers(), 2, bands);
+        balanceA.addToAverage (bands, power);
+
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            auto* samples = balanceFrame.getWritePointer (ch);
+            std::memmove (samples, samples + hop, (size_t) (frameSize - hop) * sizeof (float));
+        }
+
+        balanceFill = frameSize - hop;
+    }
 }
 
 //==============================================================================

@@ -102,6 +102,10 @@ ABReferenceEditor::ABReferenceEditor (ABReferenceProcessor& p)
     monitorButtons.onSelect = [this] (int mode) { setMonitor (mode); };
     addAndMakeVisible (monitorButtons);
 
+    viewButtons.setLabels (ABParams::displayViewNames);
+    viewButtons.onSelect = [this] (int view) { setDisplayView (view); };
+    addAndMakeVisible (viewButtons);
+
     trimKnob.setTextValueSuffix (" dB");
     offsetKnob.setTextValueSuffix (" ms");
     trimKnob.setTypeable (true);
@@ -125,6 +129,7 @@ ABReferenceEditor::ABReferenceEditor (ABReferenceProcessor& p)
     // also repaint the display behind it.
     waveform.setOpaque (true);
     addAndMakeVisible (waveform);
+    addChildComponent (balance);
 
     // The component reports what the mouse did; the parameters are written here
     // and only here. One gesture spans the whole drag, so a host's undo sees one
@@ -363,25 +368,58 @@ void ABReferenceEditor::setDarkMode (bool shouldBeDark)
     repaint();
 }
 
+int ABReferenceEditor::getDisplayView() const
+{
+    return juce::jlimit (0, 1, (int) plugin.apvts.state.getProperty (ABParams::propDisplayView, 0));
+}
+
+void ABReferenceEditor::setDisplayView (int view)
+{
+    view = juce::jlimit (0, 1, view);
+    plugin.apvts.state.setProperty (ABParams::propDisplayView, view, nullptr);
+
+    shownView = view;
+    viewButtons.setSelected (view);
+    waveform.setVisible (view == 0);
+    balance.setVisible (view == 1);
+
+    if (view == 1)
+        refreshBalance();
+
+    repaint (displayArea);
+}
+
+void ABReferenceEditor::refreshBalance()
+{
+    Balance::Bands aBalance {};
+    const bool aValid = plugin.getABalance (aBalance);
+    balance.setA (aBalance, aValid, plugin.getASecondsSinceSignal() > Balance::windowSeconds);
+
+    const auto clip = plugin.getSelectedClip();
+
+    balance.setCorridor (clip != nullptr ? clip->balance : Balance::Corridor {},
+                         clip == nullptr ? "LOAD A REFERENCE TO SEE ITS BALANCE"
+                                         : "NOTHING ABOVE THE GATE IN THIS REFERENCE");
+}
+
 //==============================================================================
 void ABReferenceEditor::resized()
 {
-    // Top: the wordmark over the two pads on the left, the slot row over the
-    // display on the right.
+    // Since 0.5 the display runs the full width, because the balance view is
+    // a graph and a graph is only as good as its size. Above it the wordmark
+    // and the slot row; below it one compact row: the A/B pads, the meters,
+    // and the match controls.
     wordmarkArea = { margin, 22, 240, 60 };
 
-    // Right-aligned on the subtitle's line, which ends well before it; the
-    // pads below leave no room for Kitbox's place under the wordmark.
+    // Right-aligned on the subtitle's line, which ends well before it.
     darkButton.setBounds (wordmarkArea.getRight() - 52, wordmarkArea.getY() + 36, 52, 17);
 
-    aPad.setBounds (margin, 92, 117, 124);
-    bPad.setBounds (margin + 123, 92, 117, 124);
-
-    // The slots share the row with "+ Load". Each slot's right edge is computed
-    // from the full width rather than accumulated, so integer division cannot
-    // drift the last edge by a pixel or two.
+    // The slots share the row with "+ Load", level with the wordmark. Each
+    // slot's right edge is computed from the full width rather than
+    // accumulated, so integer division cannot drift the last edge by a pixel
+    // or two.
     {
-        juce::Rectangle<int> row (267, margin, panelWidth - margin - 267, 26);
+        juce::Rectangle<int> row (267, 30, panelWidth - margin - 267, 26);
         const int gap = 5;
         const int loadWidth = 63;
         const int slotsWidth = row.getWidth() - loadWidth - gap;
@@ -396,29 +434,45 @@ void ABReferenceEditor::resized()
         loadButton.setBounds (row.removeFromRight (loadWidth));
     }
 
-    displayArea = { 267, 49, panelWidth - margin - 267, 167 };
+    displayArea = { margin, 82, panelWidth - 2 * margin, 220 };
+
+    // Wave or Balance, in the display's top line between the name and the
+    // transport lamp - the switch belongs to what it switches.
+    viewButtons.setBounds (displayArea.getRight() - 14 - 86 - 12 - 150, displayArea.getY() + 11, 150, 18);
 
     // The strip inside the display, under two lines of text and over one.
-    waveform.setBounds (displayArea.getX() + 14, displayArea.getY() + 54, displayArea.getWidth() - 28, 86);
+    waveform.setBounds (displayArea.getX() + 14, displayArea.getY() + 54, displayArea.getWidth() - 28, 138);
 
-    // Bottom: what the plugin measured, and what it is doing about it.
-    loudnessArea = { margin, 226, 300, 182 };
-    matchArea    = { margin + 310, 226, panelWidth - 2 * margin - 310, 182 };
+    // The balance takes the strip and the line under it: it needs the height
+    // more than the loop readout, which says nothing about the balance.
+    balance.setBounds (displayArea.getX() + 14, displayArea.getY() + 52,
+                       displayArea.getWidth() - 28, displayArea.getHeight() - 52 - 8);
 
-    resetButton.setBounds (loudnessArea.getRight() - 10 - 62, loudnessArea.getY() + 6, 62, 18);
-    meterTableArea = loudnessArea.withTrimmedTop (32).reduced (10, 0).withTrimmedBottom (10);
+    // ---- The bottom row.
+    const int rowY = 312, rowHeight = 96;
 
-    const int column = matchArea.getX() + 10;
+    aPad.setBounds (margin, rowY, 92, rowHeight);
+    bPad.setBounds (margin + 98, rowY, 92, rowHeight);
 
-    levelMatchButton.setBounds (column, matchArea.getY() + 34, 150, 26);
-    loopButton.setBounds       (column, matchArea.getY() + 70, 150, 26);
-    monitorLabelArea = { column, matchArea.getY() + 110, 150, 12 };
-    monitorButtons.setBounds   (column, matchArea.getY() + 126, 150, 26);
+    // The meters are their own dark block; Reset sits in the corner the
+    // labels' column leaves free above A and B.
+    loudnessArea   = { margin + 200, rowY, 206, rowHeight };
+    meterTableArea = loudnessArea;
+    resetButton.setBounds (loudnessArea.getX() + 8, loudnessArea.getY() + 7, 40, 15);
 
-    trimKnob.setBounds   (column + 160, matchArea.getY() + 42, 95, 82);
-    offsetKnob.setBounds (column + 255, matchArea.getY() + 42, 95, 82);
+    matchArea = { loudnessArea.getRight() + 10, rowY, panelWidth - margin - loudnessArea.getRight() - 10, rowHeight };
 
-    matchReadoutArea = { matchArea.getRight() - 10 - 64, matchArea.getY() + 32, 64, 120 };
+    const auto inner = matchArea.reduced (8);
+    const int column = inner.getX();
+
+    levelMatchButton.setBounds (column, inner.getY(),      136, 24);
+    loopButton.setBounds       (column, inner.getY() + 28, 136, 24);
+    monitorButtons.setBounds   (column, inner.getY() + 56, 136, 24);
+
+    trimKnob.setBounds   (column + 142, inner.getY() - 2, 58, inner.getHeight() + 4);
+    offsetKnob.setBounds (column + 200, inner.getY() - 2, 58, inner.getHeight() + 4);
+
+    matchReadoutArea = { inner.getRight() - 54, inner.getY(), 54, inner.getHeight() };
 
     footerArea = { margin, 418, panelWidth - 2 * margin, 14 };
 }
@@ -431,12 +485,10 @@ void ABReferenceEditor::paint (juce::Graphics& g)
     paintWordmark (g);
     paintDisplay (g);
 
-    paintSection (g, loudnessArea, "Loudness");
-    paintSection (g, matchArea, "Match");
-
-    g.setColour (Palette::inkDim);
-    g.setFont (Palette::label (9.0f));
-    g.drawText ("MONITOR", monitorLabelArea, juce::Justification::centredLeft);
+    // The match controls on a recessed section; the meters are a display of
+    // their own and need no frame around them. No titles: in a row this
+    // compact the buttons and the column heads say what each block is.
+    paintSection (g, matchArea, {});
 
     paintMeterTable (g);
     paintMatchReadout (g);
@@ -496,6 +548,9 @@ void ABReferenceEditor::paintDisplay (juce::Graphics& g)
         g.drawText (transportRunning ? "PLAYING" : "STOPPED", lampRow, juce::Justification::centredLeft);
     }
 
+    // The Wave / Balance switch sits between the name and the lamp.
+    titleRow.removeFromRight (12 + viewButtons.getWidth());
+
     g.setColour (Palette::displayText);
     g.setFont (Palette::mono (14.0f, true));
     g.drawText (displayTitle, titleRow.withTrimmedRight (10), juce::Justification::centredLeft, true);
@@ -530,9 +585,9 @@ void ABReferenceEditor::paintMeterTable (juce::Graphics& g)
     g.setColour (Palette::display);
     g.fillRoundedRectangle (meterTableArea.toFloat(), 6.0f);
 
-    auto inner = meterTableArea.reduced (14, 12);
+    auto inner = meterTableArea.reduced (8, 7);
 
-    const int labelColumn = 34;
+    const int labelColumn = 44;   // wide enough for Reset above the row names
     const int column = (inner.getWidth() - labelColumn) / 3;
 
     auto cell = [&] (int index, int y, int height)
@@ -544,9 +599,9 @@ void ABReferenceEditor::paintMeterTable (juce::Graphics& g)
     g.setFont (Palette::mono (10.0f));
 
     const int headerY = inner.getY();
-    g.drawText ("LUFS S", cell (0, headerY, 14), juce::Justification::centredRight);
-    g.drawText ("LUFS I", cell (1, headerY, 14), juce::Justification::centredRight);
-    g.drawText ("dBTP",   cell (2, headerY, 14), juce::Justification::centredRight);
+    g.drawText ("LUFS S", cell (0, headerY, 15), juce::Justification::centredRight);
+    g.drawText ("LUFS I", cell (1, headerY, 15), juce::Justification::centredRight);
+    g.drawText ("dBTP",   cell (2, headerY, 15), juce::Justification::centredRight);
 
     const auto clip = plugin.getSelectedClip();
     const float fileLufs = clip == nullptr ? kLoudnessSilence
@@ -571,15 +626,15 @@ void ABReferenceEditor::paintMeterTable (juce::Graphics& g)
           clip != nullptr }
     };
 
-    int y = headerY + 24;
+    int y = headerY + 18;
 
     for (const auto& row : rows)
     {
         g.setColour (row.colour);
-        g.setFont (Palette::mono (14.0f, true));
-        g.drawText (row.name, inner.getX(), y, labelColumn, 26, juce::Justification::centredLeft);
+        g.setFont (Palette::mono (13.0f, true));
+        g.drawText (row.name, inner.getX(), y, labelColumn, 20, juce::Justification::centredLeft);
 
-        g.setFont (Palette::mono (17.0f, true));
+        g.setFont (Palette::mono (15.0f, true));
 
         // The one number that gets its own colour is a reference pushed past
         // 0 dBTP by the level match. That is not an error - it is the plugin
@@ -588,13 +643,13 @@ void ABReferenceEditor::paintMeterTable (juce::Graphics& g)
         const bool clipping = row.valid && row.truePeak > 0.0f;
 
         g.setColour (row.valid ? row.colour : Palette::displayDim);
-        g.drawText (row.valid ? formatLufs (row.shortTerm)  : juce::String ("-"), cell (0, y, 26), juce::Justification::centredRight);
-        g.drawText (row.valid ? formatLufs (row.integrated) : juce::String ("-"), cell (1, y, 26), juce::Justification::centredRight);
+        g.drawText (row.valid ? formatLufs (row.shortTerm)  : juce::String ("-"), cell (0, y, 20), juce::Justification::centredRight);
+        g.drawText (row.valid ? formatLufs (row.integrated) : juce::String ("-"), cell (1, y, 20), juce::Justification::centredRight);
 
         g.setColour (clipping ? Palette::warning : (row.valid ? row.colour : Palette::displayDim));
-        g.drawText (row.valid ? formatDb (row.truePeak) : juce::String ("-"), cell (2, y, 26), juce::Justification::centredRight);
+        g.drawText (row.valid ? formatDb (row.truePeak) : juce::String ("-"), cell (2, y, 20), juce::Justification::centredRight);
 
-        y += 30;
+        y += 21;
     }
 
     // B minus A, in the display's dim tone: the difference is what you are
@@ -608,16 +663,16 @@ void ABReferenceEditor::paintMeterTable (juce::Graphics& g)
     };
 
     g.setColour (Palette::displayDim);
-    g.setFont (Palette::mono (14.0f));
-    g.drawText (utf8 ("Δ"), inner.getX(), y, labelColumn, 26, juce::Justification::centredLeft);
-
     g.setFont (Palette::mono (13.0f));
+    g.drawText (utf8 ("Δ"), inner.getX(), y, labelColumn, 20, juce::Justification::centredLeft);
+
+    g.setFont (Palette::mono (12.0f));
 
     if (rows[1].valid)
     {
-        g.drawText (difference (rows[0].shortTerm,  rows[1].shortTerm,  kLoudnessSilence), cell (0, y, 26), juce::Justification::centredRight);
-        g.drawText (difference (rows[0].integrated, rows[1].integrated, kLoudnessSilence), cell (1, y, 26), juce::Justification::centredRight);
-        g.drawText (difference (rows[0].truePeak,   rows[1].truePeak,   -200.0f),          cell (2, y, 26), juce::Justification::centredRight);
+        g.drawText (difference (rows[0].shortTerm,  rows[1].shortTerm,  kLoudnessSilence), cell (0, y, 20), juce::Justification::centredRight);
+        g.drawText (difference (rows[0].integrated, rows[1].integrated, kLoudnessSilence), cell (1, y, 20), juce::Justification::centredRight);
+        g.drawText (difference (rows[0].truePeak,   rows[1].truePeak,   -200.0f),          cell (2, y, 20), juce::Justification::centredRight);
     }
 }
 
@@ -629,27 +684,28 @@ void ABReferenceEditor::paintMatchReadout (juce::Graphics& g)
     const bool on = plugin.apvts.getRawParameterValue (ABParams::levelMatch)->load() > 0.5f;
     const bool clamped = plugin.isMatchClamped();
 
-    auto area = matchReadoutArea.reduced (4, 14);
+    auto area = matchReadoutArea.reduced (3, 8);
 
     g.setColour (Palette::displayDim);
-    g.setFont (Palette::mono (10.0f));
+    g.setFont (Palette::mono (9.5f));
     g.drawText ("MATCH", area.removeFromTop (12), juce::Justification::centred);
 
-    area.removeFromTop (12);
+    area.removeFromTop (5);
 
     g.setColour (clamped ? Palette::warning : (on ? Palette::displayText : Palette::displayDim));
-    g.setFont (Palette::mono (19.0f, true));
-    g.drawText (on ? formatDb (plugin.getMatchDb(), true) : juce::String ("OFF"),
-                area.removeFromTop (22), juce::Justification::centred);
+    g.setFont (Palette::mono (16.0f, true));
+    g.drawFittedText (on ? formatDb (plugin.getMatchDb(), true) : juce::String ("OFF"),
+                      area.removeFromTop (20), juce::Justification::centred, 1, 0.8f);
 
-    g.setFont (Palette::mono (10.0f));
-    g.drawText (clamped ? "LIMIT" : "dB", area.removeFromTop (14), juce::Justification::centred);
+    g.setFont (Palette::mono (9.5f));
+    g.drawText (clamped ? "LIMIT" : "dB", area.removeFromTop (12), juce::Justification::centred);
 
     // What B is actually played at: the match plus the trim.
-    area.removeFromTop (10);
+    area.removeFromTop (5);
     g.setColour (Palette::displayDim);
-    g.drawText (utf8 ("→ B ") + formatDb (plugin.getTotalRefDb(), true),
-                area.removeFromTop (14), juce::Justification::centred);
+    g.setFont (Palette::mono (9.0f));
+    g.drawFittedText (utf8 ("→B ") + formatDb (plugin.getTotalRefDb(), true),
+                      area.removeFromTop (12), juce::Justification::centred, 1, 0.8f);
 }
 
 void ABReferenceEditor::paintFooter (juce::Graphics& g)
@@ -779,6 +835,17 @@ void ABReferenceEditor::refreshSwitchCaptions()
 //==============================================================================
 void ABReferenceEditor::timerCallback()
 {
+    // A's balance follows whichever view is up, so switching to it shows a
+    // curve that is already settled rather than one that starts from nothing.
+    plugin.updateBalance();
+
+    // The view lives in the session; a host restoring state while the panel is
+    // open is what changes it behind the buttons' back.
+    if (shownView != getDisplayView())
+        setDisplayView (getDisplayView());
+    else if (shownView == 1)
+        refreshBalance();
+
     // Another AB Reference window may have switched the theme: it is process-wide.
     if (shownDark != Palette::dark)
     {

@@ -20,7 +20,7 @@
 
 cmake_minimum_required(VERSION 3.22)
 
-project(ABReference VERSION 0.4.1)
+project(ABReference VERSION 0.5.0)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -70,6 +70,7 @@ juce_add_plugin(ABReference
 # target can link exactly the same objects the plugin runs. Testing a
 # reimplementation of the meter would test nothing.
 set(ABREFERENCE_CORE_SOURCES
+    Source/BalanceAnalyser.cpp
     Source/LoudnessMeter.cpp
     Source/TruePeakMeter.cpp
     Source/ReferenceLoader.cpp
@@ -83,6 +84,7 @@ target_sources(ABReference PRIVATE
     Source/PluginEditor.cpp
     Source/ReferenceSlotButton.cpp
     Source/WaveformDisplay.cpp
+    Source/BalanceDisplay.cpp
     Source/UI/ABPad.cpp
     Source/UI/ChoiceButtons.cpp
     Source/UI/Knob.cpp)
@@ -115,6 +117,7 @@ juce_add_console_app(MeterCheck PRODUCT_NAME "MeterCheck")
 
 target_sources(MeterCheck PRIVATE
     Verification/MeterCheck.cpp
+    Source/BalanceAnalyser.cpp
     Source/LoudnessMeter.cpp
     Source/TruePeakMeter.cpp
     Source/ABEngine.cpp

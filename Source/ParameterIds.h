@@ -115,6 +115,12 @@ namespace ABParams
     inline constexpr const char* stateTreeType   = "ABReferenceState";
     inline constexpr const char* propStateVersion = "stateVersion";
 
+    /** What the display shows: 0 the waveform, 1 the balance. A view, not a
+        parameter - nothing about the sound depends on it - but kept with the
+        session so a project opens on the view it was left on. */
+    inline constexpr const char* propDisplayView = "displayView";
+    inline const juce::StringArray displayViewNames { "Wave", "Balance" };
+
     /** One path per slot. `propReferencePath` is the pre-slots single-reference
         name, still read so that a session saved before this existed restores
         its reference into slot 1 rather than losing it. */
