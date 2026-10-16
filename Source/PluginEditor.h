@@ -42,6 +42,7 @@
 #include "UI/ABPad.h"
 #include "UI/ChoiceButtons.h"
 #include "UI/FlatToggle.h"
+#include "UI/PresetButton.h"
 #include "UI/Knob.h"
 
 class ABReferenceEditor : public juce::AudioProcessorEditor,
@@ -115,6 +116,7 @@ private:
     FlatToggle loadButton { "+ Load" };
     FlatToggle resetButton { "Reset" };
     FlatToggle darkButton { "Dark" };
+    PresetButton presetButton { plugin };
     bool shownDark = false;
 
     FlatToggle levelMatchButton { "Level Match" };

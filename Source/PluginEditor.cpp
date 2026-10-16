@@ -44,6 +44,7 @@ ABReferenceEditor::ABReferenceEditor (ABReferenceProcessor& p)
     darkButton.setTooltip ("Dark panel on / off");
     darkButton.onClick = [this] { setDarkMode (! Palette::dark); };
     addAndMakeVisible (darkButton);
+    addAndMakeVisible (presetButton);
 
     addAndMakeVisible (aPad);
     addAndMakeVisible (bPad);
@@ -413,6 +414,7 @@ void ABReferenceEditor::resized()
 
     // Right-aligned on the subtitle's line, which ends well before it.
     darkButton.setBounds (wordmarkArea.getRight() - 52, wordmarkArea.getY() + 36, 52, 17);
+    presetButton.setBounds (darkButton.getX() - 6 - 64, darkButton.getY(), 64, 17);
 
     // The slots share the row with "+ Load", level with the wordmark. Each
     // slot's right edge is computed from the full width rather than

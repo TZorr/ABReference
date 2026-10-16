@@ -20,6 +20,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "PluginEditor.h"
+#include "Engine/PresetFile.h"
 #include "PluginProcessor.h"
 #include "BalanceDisplay.h"
 #include "WaveformDisplay.h"
@@ -448,6 +449,50 @@ namespace
             expectLayout (std::abs (monoMatch - stereoMatch) < 0.1f,
                           "[1,1] matches like [2,2] for material that is the same on both channels");
             expectLayout (std::abs (mixedMatch - stereoMatch) < 0.01f, "[1,2] matches exactly like [2,2]");
+        }
+
+        // The preset menu's own file: readable XML naming this plugin, the
+        // knobs and the reference paths back, a missing reference no harm,
+        // another plugin's preset and an .aupreset refused.
+        std::printf ("Presets:\n");
+        {
+            const auto folder = juce::File::createTempFile ("presets");
+            folder.createDirectory();
+            const auto file = folder.getChildFile (juce::String ("Test") + PresetFile::extension);
+            const auto missing = folder.getChildFile ("Gone.wav");
+            const auto trim = [] (ABReferenceProcessor& processor) { return processor.apvts.getRawParameterValue (ABParams::trimDb)->load(); };
+
+            ABReferenceProcessor original;
+            setPlain (original, ABParams::trimDb, 4.0f);
+            original.loadReference (0, missing);
+            expectLayout (PresetButton::save (original, file).wasOk(), "a preset saves");
+
+            const auto text = file.loadFileAsString();
+            const auto xml = juce::XmlDocument::parse (text);
+            expectLayout (juce::String (PresetFile::extension) == ".abref" && xml != nullptr && xml->hasTagName ("TZorrPreset")
+                              && xml->getStringAttribute ("plugin") == "Abrf" && text.contains (missing.getFullPathName()),
+                          "the preset is readable XML naming Abrf, with the reference path");
+
+            ABReferenceProcessor loaded;
+            loaded.prepareToPlay (48000.0, 512);
+            expectLayout (PresetButton::load (loaded, file).wasOk(), "a preset loads");
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
+            expectLayout (std::abs (trim (loaded) - 4.0f) < 0.01f && loaded.getSelectedClip() == nullptr,
+                          "a preset brings back the knobs, and a missing reference leaves the slot empty");
+
+            const auto foreign = folder.getChildFile (juce::String ("Foreign") + PresetFile::extension);
+            foreign.replaceWithText (text.replace ("plugin=\"Abrf\"", "plugin=\"Tnbx\""));
+            ABReferenceProcessor untouched;
+            const auto before = trim (untouched);
+            expectLayout (PresetButton::load (untouched, foreign).failed() && trim (untouched) == before,
+                          "another plugin's preset is refused");
+
+            const auto auPreset = folder.getChildFile ("Logic.aupreset");
+            auPreset.replaceWithText ("<?xml version=\"1.0\"?><plist version=\"1.0\"><dict/></plist>");
+            expectLayout (PresetButton::load (untouched, auPreset).failed() && trim (untouched) == before,
+                          "an .aupreset is refused");
+
+            folder.deleteRecursively();
         }
 
         std::printf ("%s\n", layoutFailures == 0 ? "All layout checks passed" : "LAYOUT CHECKS FAILED");

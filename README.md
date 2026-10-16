@@ -10,6 +10,8 @@ A mastering A/B plugin for macOS: Audio Unit, VST3 and Standalone.
 not the session's - every AB Reference window and project opens the way you
 left it.
 
+**PRESETS** beside the Dark switch opens the plugin's own preset menu. It lists `~/Library/Audio/Presets/T'Zorr/AB Reference/`, and each subfolder becomes a submenu. It also has Save Preset…, Load Preset… and Show in Finder. Presets are `.abref` files: plain XML that names the plugin and holds its settings, readable in any text editor. Logic keeps its own `.aupreset` settings in its own menu; the two do not mix. In VST3 hosts such as Bitwig this menu is the only way to load and save presets. A preset keeps the reference files by their paths, not the audio: a file moved or deleted since leaves its slot empty.
+
 No network code, no telemetry, no account. `JUCE_USE_CURL=0` and
 `JUCE_WEB_BROWSER=0` are set at the build level, not just left unused.
 
